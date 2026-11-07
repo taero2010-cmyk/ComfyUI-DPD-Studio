@@ -128,6 +128,7 @@ function snap(c, d) {
   const id = stackOf(c.n) || stackOf(c.d) || `s${Date.now().toString(36)}`;
   [c.n, c.d, ...members(stackOf(c.d)), ...members(stackOf(c.n))].forEach(m => { m.properties = m.properties || {}; m.properties.dpdStack = id; });
   graph().afterChange?.();
+  if (lineUpOn()) lineUp(members(id));
   app.canvas.setDirty(true, true);
 }
 // out of the stack: it stays wired, stops moving with the stack, and steps aside so you can see it left
@@ -138,6 +139,47 @@ function unstack(n) {
   if (list.length) { const right = Math.max(...list.map(m => box(m).x + box(m).w)); n.pos[0] = right + 60; }
   tidyStack(); graph().afterChange?.(); app.canvas.setDirty(true, true);
 }
+// ---------------------------------------------------------------- lining up
+// columns get one width (the widest node's, never narrower than a node needs) and every gap becomes the same.
+// The first column is laid top to bottom; a node beside it lines its top up with the neighbour it sat next to.
+const lineUpOn = () => app.extensionManager.setting.get("Comfy.Conduit.LineUp") !== false;
+function columns(list) {
+  const cols = [];
+  [...list].sort((a, b) => a.pos[0] - b.pos[0]).forEach(n => {
+    const c = cols.find(c => Math.abs(c.x - n.pos[0]) < Math.max(60, c.w * 0.4));
+    if (c) { c.nodes.push(n); c.w = Math.max(c.w, n.size[0]); } else cols.push({ x: n.pos[0], w: n.size[0], nodes: [n] });
+  });
+  cols.forEach(c => c.nodes.sort((a, b) => a.pos[1] - b.pos[1]));
+  return cols;
+}
+function lineUp(list) {
+  list = list.filter(live); if (list.length < 2) return;
+  const cols = columns(list), first = cols[0];
+  // remember which first-column node each side node sat beside, before anything moves
+  const beside = new Map();
+  cols.slice(1).forEach(c => c.nodes.forEach(n => {
+    let best = null, most = -1;
+    first.nodes.forEach(f => { const o = Math.min(f.pos[1] + f.size[1], n.pos[1] + n.size[1]) - Math.max(f.pos[1], n.pos[1]); if (o > most) { most = o; best = f; } });
+    beside.set(n, best);
+  }));
+  graph().beforeChange?.();
+  let x = first.x;
+  cols.forEach(c => {
+    const w = Math.max(...c.nodes.map(n => Math.max(n.size[0], (n.computeSize ? n.computeSize()[0] : 0))));
+    c.nodes.forEach(n => { n.setSize ? n.setSize([w, n.size[1]]) : (n.size[0] = w); n.pos[0] = x; });
+    c.x = x; x += w + GAP;
+  });
+  let y = first.nodes[0].pos[1];
+  first.nodes.forEach(n => { n.pos[1] = y; y += n.size[1] + TH() + GAP; });
+  cols.slice(1).forEach(c => {
+    let floor = -Infinity;
+    c.nodes.map(n => ({ n, want: beside.get(n) ? beside.get(n).pos[1] : n.pos[1] })).sort((a, b) => a.want - b.want).forEach(({ n, want }) => {
+      n.pos[1] = Math.max(want, floor); floor = n.pos[1] + n.size[1] + TH() + GAP;
+    });
+  });
+  graph().afterChange?.(); app.canvas.setDirty(true, true);
+}
+const selected = () => { const c = app.canvas; return c.selectedItems ? [...c.selectedItems].filter(i => i instanceof LGraphNode) : Object.values(c.selected_nodes || {}); };
 function takeApart(n) { const s = stackOf(n); graph().beforeChange?.(); members(s).forEach(m => delete m.properties.dpdStack); graph().afterChange?.(); app.canvas.setDirty(true, true); }
 function tidyStack() { const count = {}; graph().nodes.forEach(n => { const s = stackOf(n); if (s) count[s] = (count[s] || 0) + 1; }); graph().nodes.forEach(n => { if (stackOf(n) && count[stackOf(n)] < 2) delete n.properties.dpdStack; }); }
 
@@ -294,10 +336,13 @@ function drawMagnet(ctx) {
 
 app.registerExtension({
   name: "Comfy.Conduit",
-  settings: [{ id: "Comfy.Conduit.Enabled", category: ["Comfy Blueprint", "Conduit", "Magnets"], name: "Comfy Conduit: magnets, stacks and passthrough lanes", type: "boolean", defaultValue: true, tooltip: "Drag a node near another to snap and wire it; stacked nodes move together and long wires ride the lanes. Right-click a node to take it out of its stack." }],
+  settings: [{ id: "Comfy.Conduit.LineUp", category: ["Comfy Blueprint", "Conduit", "Line up"], name: "Line up a stack after every snap (same width, even spacing)", type: "boolean", defaultValue: true }, { id: "Comfy.Conduit.Enabled", category: ["Comfy Blueprint", "Conduit", "Magnets"], name: "Comfy Conduit: magnets, stacks and passthrough lanes", type: "boolean", defaultValue: true, tooltip: "Drag a node near another to snap and wire it; stacked nodes move together and long wires ride the lanes. Right-click a node to take it out of its stack." }],
   getNodeMenuItems(node) {
-    if (!ON() || !stackOf(node)) return [];
-    return [{ content: "Take out of stack", callback: () => unstack(node) }, { content: "Take the whole stack apart", callback: () => takeApart(node) }];
+    if (!ON()) return [];
+    const items = [], sel = selected();
+    if (sel.length > 1 && sel.includes(node)) items.push({ content: `Line up the ${sel.length} selected nodes`, callback: () => lineUp(sel) });
+    if (stackOf(node)) items.push({ content: "Line up this stack", callback: () => lineUp(members(stackOf(node))) }, { content: "Take out of stack", callback: () => unstack(node) }, { content: "Take the whole stack apart", callback: () => takeApart(node) });
+    return items;
   },
   setup() {
     const el = app.canvas.canvas;
@@ -315,6 +360,6 @@ app.registerExtension({
     };
     const fg = app.canvas.onDrawForeground;
     app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawMagnet(ctx); drawBadges(ctx); } };
-    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack };
+    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack, lineUp, columns };
   },
 });
