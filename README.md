@@ -5,6 +5,7 @@ Free tools for people who can't afford the paid ones. These come out of **DPD St
 | Section | What it gives you |
 | --- | --- |
 | [Comfy Blueprint](#comfy-blueprint) | See where your render is, and learn what every node does and why it's wired there |
+| [Comfy Stacks](#comfy-stacks) | Magnets, stacks and passthrough lanes: build a workflow by snapping nodes together, with no long wires |
 
 More sections are on the way.
 
@@ -55,6 +56,36 @@ Add it from **utils → Comfy Blueprint**: a small came from / now / next box fo
 ```
 
 Pull requests with notes for more nodes are very welcome. That's how this gets better for everyone.
+
+<br clear="right">
+
+---
+
+## Comfy Stacks
+
+**Snap nodes together like magnets. Long wires ride lanes instead of crossing your canvas.**
+
+<img src="docs/stacks.jpg" alt="A whole text-to-image workflow built as one stack: wires from Load Checkpoint run down a lane on the left to the nodes that need them" width="300" align="right">
+
+### Magnets
+Drag a node near another. If they can connect, the edge lights up green and a label shows exactly what will wire up (`CLIP → clip`, `VAE → vae (lane)`). Let go and the node snaps alongside and wires itself. If nothing fits, nothing snaps.
+
+Snapping wires to the **whole stack**, not just the node you dropped next to. A VAE Decode dropped at the bottom gets its VAE from the Load Checkpoint at the top. Members are read top to bottom, so a prompt stacked above another lands on *positive* and the lower one on *negative*.
+
+Hold **Alt** while dragging to place a node freely.
+
+### Stacks
+Snapped nodes become one stack and move together: drag any member and the whole stack follows. **Alt-drag** pulls a node out of its stack.
+
+### Passthrough lanes
+A wire between two members of a stack, with others in between, or one that climbs back up the stack, is drawn through the stack's lane channel instead of looping across the canvas. Each lane has its own track, so many can run side by side.
+
+The wire itself is an ordinary ComfyUI link. Renders are exactly the same, and a workflow opened without this pack just shows normal wires.
+
+### The lane picker
+The **⇅** badge on a node's title opens a list of everything that node can take and every node on the canvas that can feed it, nearest first: *"vae needs a VAE: from Load Checkpoint · 5 boxes up, through the lanes"*. Pick one and it's wired.
+
+Turn it all off under **Settings → Comfy Blueprint → Stacks**.
 
 <br clear="right">
 
