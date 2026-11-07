@@ -250,5 +250,9 @@
  "Reroute": {
   "what": "A dot that bends a wire to keep the layout tidy. It changes nothing.",
   "why": "Purely for neatness."
+ },
+ "LongTakeRelayVSR": {
+  "what": "A fast 4x video upscale. Every 15 frames it draws one sharp keyframe in a single Wan step, and a tiny network carries that detail to the frames in between. Here it runs about 13 times faster than SeedVR2 with less flicker; SeedVR2 keeps faces a touch truer.",
+  "why": "It comes last, after the video is decoded: upscaling only the finished frames is far cheaper than rendering big from the start. It frees the graphics card of every other model first, because it needs about 15 GB. Its counter is frames done."
  }
 }
