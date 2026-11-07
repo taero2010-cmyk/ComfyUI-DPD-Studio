@@ -1,7 +1,8 @@
-// Comfy Stacks: magnets, stacks and passthrough lanes for ComfyUI's canvas.
+// Comfy Conduit: magnets, stacks and passthrough lanes for ComfyUI's canvas.
 // · Magnets: drag a node near another and the edges where they can really connect light up green. Let go and it snaps
-//   alongside and wires itself. Where nothing fits, nothing snaps. Hold Alt while dragging to place a node freely.
-// · Stacks: snapped nodes move together. Alt-drag pulls one out.
+//   alongside and wires itself. Where nothing fits, nothing snaps.
+// · Stacks: snapped nodes move together. Right-click a node, or use its ⇅ picker, to take it out of its stack.
+//   Alt-drag stays ComfyUI's own copy-and-drag; the copy starts outside any stack.
 // · Lanes: a wire between two nodes of one stack with others in between is drawn through the stack's lane channel
 //   instead of looping across the canvas. The wire itself is an ordinary ComfyUI link: a workflow opened without this
 //   pack shows normal wires, and renders are the same either way.
@@ -10,7 +11,7 @@
 import { app } from "../../../scripts/app.js";
 
 const GAP = 22, NEAR = 70, LANE = 8, GREEN = "#3fcf74";
-const ON = () => app.extensionManager.setting.get("Comfy.Stacks.Enabled") !== false;
+const ON = () => app.extensionManager.setting.get("Comfy.Conduit.Enabled") !== false;
 const S = { drag: null, cand: null, lanes: new Map(), rails: [] };
 const TH = () => LiteGraph.NODE_TITLE_HEIGHT || 30;
 const graph = () => app.canvas.graph || app.graph;
@@ -90,9 +91,9 @@ function onDown(e) {
   if (badgeHit(x, y, e)) return;
   const n = graph().getNodeOnPos(x, y);
   if (!n) return;
-  // dragging a node of a stack carries the whole stack; Alt pulls it out on its own
+  // dragging a node of a stack carries the whole stack; Alt is ComfyUI's copy-and-drag, which moves the copy alone
   const crew = e.altKey ? [] : members(stackOf(n)).filter(m => m !== n);
-  S.drag = { n, start: [...n.pos], crew: crew.map(m => ({ m, start: [...m.pos] })), alt: e.altKey, moved: false };
+  S.drag = { n, start: [...n.pos], crew: crew.map(m => ({ m, start: [...m.pos] })), alt: e.altKey, moved: false, had: new Set(graph().nodes.map(m => m.id)) };
 }
 // these run on the capture phase, before the canvas moves the node, so each looks a moment later
 function follow(d, alt) {
@@ -113,7 +114,7 @@ function onUp(e) {
   setTimeout(() => {                                       // after the canvas has finished its own drag
     follow(d, alt);
     const c = S.cand; S.cand = null;
-    if (d.moved && alt && stackOf(d.n)) { delete d.n.properties.dpdStack; tidyStack(); }
+    if (alt) graph().nodes.forEach(m => { if (!d.had.has(m.id) && m.properties && m.properties.dpdStack) delete m.properties.dpdStack; });   // a copy starts on its own
     if (d.moved && c && !alt) snap(c, d);
     app.canvas.setDirty(true, true);
   }, 0);
@@ -129,6 +130,15 @@ function snap(c, d) {
   graph().afterChange?.();
   app.canvas.setDirty(true, true);
 }
+// out of the stack: it stays wired, stops moving with the stack, and steps aside so you can see it left
+function unstack(n) {
+  const list = members(stackOf(n)).filter(m => m !== n); if (!stackOf(n)) return;
+  graph().beforeChange?.();
+  delete n.properties.dpdStack;
+  if (list.length) { const right = Math.max(...list.map(m => box(m).x + box(m).w)); n.pos[0] = right + 60; }
+  tidyStack(); graph().afterChange?.(); app.canvas.setDirty(true, true);
+}
+function takeApart(n) { const s = stackOf(n); graph().beforeChange?.(); members(s).forEach(m => delete m.properties.dpdStack); graph().afterChange?.(); app.canvas.setDirty(true, true); }
 function tidyStack() { const count = {}; graph().nodes.forEach(n => { const s = stackOf(n); if (s) count[s] = (count[s] || 0) + 1; }); graph().nodes.forEach(n => { if (stackOf(n) && count[stackOf(n)] < 2) delete n.properties.dpdStack; }); }
 
 // ---------------------------------------------------------------- lanes
@@ -231,8 +241,9 @@ function openPicker(n, cx, cy) {
   });
   picker = document.createElement("div");
   picker.className = "cst-pick";
-  picker.innerHTML = `<h4>${esc(n.title)} <span>lanes</span></h4>` + rows.map((r, k) => `<section><p><b>${esc(r.inp.label || r.inp.name)}</b> needs ${article(String(r.inp.type))} ${esc(r.inp.type)}${r.have ? ` · now from <i>${esc(r.have.title)}</i>` : ""}</p>${r.options.length ? r.options.slice(0, 6).map((o, q) => `<button data-k="${k}" data-q="${q}"${r.have === o.m ? ' class="on"' : ""}>from <b>${esc(o.m.title)}</b><small>${esc(o.o.label || o.o.name || o.o.type)} · ${esc(where(o.m, n))}</small></button>`).join("") : `<em>Nothing on the canvas makes ${article(String(r.inp.type))} ${esc(r.inp.type)} yet.</em>`}</section>`).join("");
+  picker.innerHTML = `<h4>${esc(n.title)} <span>lanes</span>${stackOf(n) ? `<button class="out" data-out="1">Take out of stack</button>` : ""}</h4>` + rows.map((r, k) => `<section><p><b>${esc(r.inp.label || r.inp.name)}</b> needs ${article(String(r.inp.type))} ${esc(r.inp.type)}${r.have ? ` · now from <i>${esc(r.have.title)}</i>` : ""}</p>${r.options.length ? r.options.slice(0, 6).map((o, q) => `<button data-k="${k}" data-q="${q}"${r.have === o.m ? ' class="on"' : ""}>from <b>${esc(o.m.title)}</b><small>${esc(o.o.label || o.o.name || o.o.type)} · ${esc(where(o.m, n))}</small></button>`).join("") : `<em>Nothing on the canvas makes ${article(String(r.inp.type))} ${esc(r.inp.type)} yet.</em>`}</section>`).join("");
   picker.addEventListener("click", e => {
+    if (e.target.closest("button[data-out]")) { unstack(n); closePicker(); return; }
     const b = e.target.closest("button[data-k]"); if (!b) return;
     const r = rows[+b.dataset.k], o = r.options[+b.dataset.q];
     g.beforeChange?.(); o.m.connect(o.j, n, r.i); g.afterChange?.();
@@ -247,7 +258,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const css = document.createElement("style");
 css.textContent = `
 .cst-pick{position:fixed;z-index:10000;width:330px;max-height:70vh;overflow:auto;padding:10px 12px;background:#1b1a21;border:1px solid #e8b64c;border-radius:4px;box-shadow:0 14px 40px rgba(0,0,0,.55);font:13px/1.4 system-ui,sans-serif;color:#e9e6ef}
-.cst-pick h4{margin:0 0 8px;font:700 14px system-ui}.cst-pick h4 span{color:#e8b64c;font-weight:600}
+.cst-pick h4{display:flex;align-items:center;gap:6px;margin:0 0 8px;font:700 14px system-ui}.cst-pick h4 button.out{width:auto;margin:0 0 0 auto;padding:3px 8px;font-size:12px;border-color:#e8b64c}.cst-pick h4 span{color:#e8b64c;font-weight:600}
 .cst-pick section{margin:0 0 10px}.cst-pick p{margin:0 0 4px;color:#cfcad8}.cst-pick p i{color:#fff;font-style:normal}
 .cst-pick button{display:block;width:100%;text-align:left;margin:0 0 3px;padding:5px 8px;border:1px solid #3a3644;border-radius:3px;background:rgba(255,255,255,.03);color:#e9e6ef;font:13px system-ui;cursor:pointer}
 .cst-pick button:hover{border-color:${GREEN};background:rgba(63,207,116,.1)}.cst-pick button.on{border-color:#5a5666;opacity:.7}
@@ -282,8 +293,12 @@ function drawMagnet(ctx) {
 }
 
 app.registerExtension({
-  name: "Comfy.Stacks",
-  settings: [{ id: "Comfy.Stacks.Enabled", category: ["Comfy Blueprint", "Stacks", "Magnets"], name: "Magnets, stacks and passthrough lanes", type: "boolean", defaultValue: true, tooltip: "Drag a node near another to snap and wire it; stacked nodes move together and long wires ride the lanes. Hold Alt to drag freely." }],
+  name: "Comfy.Conduit",
+  settings: [{ id: "Comfy.Conduit.Enabled", category: ["Comfy Blueprint", "Conduit", "Magnets"], name: "Comfy Conduit: magnets, stacks and passthrough lanes", type: "boolean", defaultValue: true, tooltip: "Drag a node near another to snap and wire it; stacked nodes move together and long wires ride the lanes. Right-click a node to take it out of its stack." }],
+  getNodeMenuItems(node) {
+    if (!ON() || !stackOf(node)) return [];
+    return [{ content: "Take out of stack", callback: () => unstack(node) }, { content: "Take the whole stack apart", callback: () => takeApart(node) }];
+  },
   setup() {
     const el = app.canvas.canvas;
     el.addEventListener("pointerdown", onDown, true);
@@ -300,6 +315,6 @@ app.registerExtension({
     };
     const fg = app.canvas.onDrawForeground;
     app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawMagnet(ctx); drawBadges(ctx); } };
-    window.__comfyStacks = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members };
+    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack };
   },
 });
