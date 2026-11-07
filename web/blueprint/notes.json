@@ -1,0 +1,254 @@
+{
+ "CheckpointLoaderSimple": {
+  "what": "Opens a model file and hands out its three parts: the MODEL that draws, the CLIP that reads your words, and the VAE that turns pictures to and from latent space.",
+  "why": "It comes first because everything else needs one of its three parts. Follow its wires and you see who uses what."
+ },
+ "UNETLoader": {
+  "what": "Loads just the drawing model (the diffusion model), without its text reader or VAE.",
+  "why": "Newer models ship as separate files, so the drawing part, the text part and the VAE each get their own loader."
+ },
+ "CLIPLoader": {
+  "what": "Loads the text reader on its own.",
+  "why": "Its CLIP goes to every Text Encode node."
+ },
+ "DualCLIPLoader": {
+  "what": "Loads two text readers that work as a pair (Flux and SD3 use two).",
+  "why": "Both read your prompt; the pair goes on to the Text Encode node."
+ },
+ "VAELoader": {
+  "what": "Loads the VAE on its own: the translator between real pictures and latent space.",
+  "why": "Anything that turns a picture into latents (encode) or latents back into a picture (decode) needs it."
+ },
+ "LoraLoader": {
+  "what": "Adds a LoRA: a small add-on that teaches the model a face, a style or an object.",
+  "why": "It sits between the loader and the sampler, so the sampler gets the model with the LoRA already mixed in."
+ },
+ "LoraLoaderModelOnly": {
+  "what": "Adds a LoRA to the drawing model only.",
+  "why": "Between the loader and the sampler, like any LoRA; this one leaves the text reader alone."
+ },
+ "CLIPTextEncode": {
+  "what": "Turns your words into numbers the model understands (the conditioning).",
+  "why": "Usually there are two: the positive prompt (what you want) and the negative prompt (what to avoid). Both wires end at the sampler."
+ },
+ "CLIPSetLastLayer": {
+  "what": "Tells the text reader to stop a layer or two early, which some anime-style models expect.",
+  "why": "Between the loader's CLIP and the Text Encode nodes."
+ },
+ "ConditioningCombine": {
+  "what": "Joins two sets of prompt numbers into one.",
+  "why": "Used when a picture has several prompts at once; the joined result goes to the sampler."
+ },
+ "EmptyLatentImage": {
+  "what": "Makes a blank canvas of noise in latent space at the size you ask for.",
+  "why": "The sampler needs something to start from. For a brand-new picture that's empty noise; for editing a photo it's the photo, encoded."
+ },
+ "EmptySD3LatentImage": {
+  "what": "A blank latent canvas sized for SD3 and Flux style models.",
+  "why": "Same job as Empty Latent Image, for models that use a different latent shape."
+ },
+ "KSampler": {
+  "what": "The artist. Starting from noise, it removes a little noise each step, guided by your prompt, until a picture appears. The step counter you see is this node working.",
+  "why": "Everything meets here: the MODEL from the loader, the positive and negative prompts, and the starting latent. Its result is still a latent, so a VAE Decode comes after."
+ },
+ "KSamplerAdvanced": {
+  "what": "The sampler with more controls: start and stop at chosen steps, and add noise or not.",
+  "why": "Used for two-stage renders, where one sampler hands its half-finished picture to another."
+ },
+ "SamplerCustomAdvanced": {
+  "what": "A sampler built from parts: a noise source, a guider, a sampler type and a schedule, each a separate node.",
+  "why": "Newer models (Flux, LTX) wire it this way so each part can be swapped. The small nodes feeding it are those parts."
+ },
+ "BasicGuider": {
+  "what": "Bundles the model and the prompt into one guide for the custom sampler.",
+  "why": "Feeds Sampler Custom Advanced."
+ },
+ "CFGGuider": {
+  "what": "Bundles the model with positive and negative prompts, and how strongly to follow them (CFG).",
+  "why": "Feeds Sampler Custom Advanced."
+ },
+ "RandomNoise": {
+  "what": "The seed: the starting noise. The same seed with the same settings gives the same picture.",
+  "why": "Feeds Sampler Custom Advanced. Seed Hunt in the studio is trying many of these."
+ },
+ "KSamplerSelect": {
+  "what": "Picks the sampling method (euler, dpm++ and so on).",
+  "why": "Feeds Sampler Custom Advanced."
+ },
+ "BasicScheduler": {
+  "what": "Works out how much noise to remove at each step.",
+  "why": "Its schedule (the sigmas) feeds Sampler Custom Advanced."
+ },
+ "VAEDecode": {
+  "what": "Turns the finished latent back into a real picture you can see.",
+  "why": "It comes right after the sampler, because the sampler works in latent space and our eyes don't."
+ },
+ "VAEDecodeTiled": {
+  "what": "VAE Decode in tiles, so big pictures and long videos fit in the graphics card's memory.",
+  "why": "After the sampler, like VAE Decode; used for large or long outputs."
+ },
+ "VAEEncode": {
+  "what": "Turns a real picture into a latent so the sampler can work on it.",
+  "why": "Before the sampler, when you start from a photo or a frame instead of empty noise."
+ },
+ "LoadImage": {
+  "what": "Brings in a picture from your computer.",
+  "why": "Feeds anything that starts from a picture: an encode, a mask, a reference."
+ },
+ "ImageScale": {
+  "what": "Resizes a picture.",
+  "why": "Usually right before saving, or before handing a picture to a step that needs a set size."
+ },
+ "ImageUpscaleWithModel": {
+  "what": "Makes a picture bigger with an upscale model, adding real detail rather than just stretching.",
+  "why": "After decoding, once the picture is final."
+ },
+ "UpscaleModelLoader": {
+  "what": "Loads the upscale model.",
+  "why": "Its model goes to Upscale Image (using Model)."
+ },
+ "SaveImage": {
+  "what": "Saves the picture to the output folder.",
+  "why": "The last stop. ComfyUI works backwards from save and preview nodes, so a chain without one never runs."
+ },
+ "PreviewImage": {
+  "what": "Shows the picture without saving it.",
+  "why": "Also an ending node: it is why the steps before it run at all."
+ },
+ "VHS_VideoCombine": {
+  "what": "Joins the frames into a video file, with sound if given.",
+  "why": "The last stop for video: frames in, finished file out."
+ },
+ "VHS_LoadVideo": {
+  "what": "Brings in a video as a stack of frames.",
+  "why": "Feeds anything that works on existing footage: restyle, upscale, extend."
+ },
+ "LongTakeTimeline": {
+  "what": "The plan of your long take: the beats, what happens when, and how many seconds each part lasts.",
+  "why": "It feeds the Render node, which reads it to know what each chunk should show."
+ },
+ "LongTakeCast": {
+  "what": "Who is in the take: each character's look and the pictures that keep them looking the same.",
+  "why": "Feeds the Render node, so every chunk keeps the same faces and clothes."
+ },
+ "LongTakeRender": {
+  "what": "The heart of a long take. It renders the film in short overlapping chunks, each starting from the end of the last, so they join into one unbroken shot. 'chunk 3/40' is this node counting.",
+  "why": "It takes the Timeline, the Cast and the models, and runs a sampler inside every chunk, which is why you see the steps count up again for each chunk."
+ },
+ "LongTakeAssemble": {
+  "what": "Stitches the chunks' latents into one take and decodes it.",
+  "why": "After the Render node: the chunks are ready, and this joins the seams."
+ },
+ "LongTakeMasterLook": {
+  "what": "Gives the whole take one look: colour, contrast and grain, the same in every chunk.",
+  "why": "Applied across the take so no chunk looks different from its neighbours."
+ },
+ "LongTakeStudio": {
+  "what": "The studio's image editor as a node.",
+  "why": "Makes or fixes the opening picture that the long take starts from."
+ },
+ "DPDLoadSplat": {
+  "what": "Loads a 3D Gaussian splat (.ply) scene.",
+  "why": "Feeds the 3D stage, so a camera can move through a real place."
+ },
+ "DPDSongRangeMask": {
+  "what": "Marks which part of a song to repaint or extend.",
+  "why": "Feeds the music sampler, so only that stretch changes."
+ },
+ "SetLatentNoiseMask": {
+  "what": "Tells the sampler which part of the latent it may change; the rest stays as it was.",
+  "why": "Between the encode and the sampler, for inpainting: the mask decides where the new picture goes."
+ },
+ "InpaintModelConditioning": {
+  "what": "Prepares an inpaint: the picture, the mask and the prompts, packed the way inpaint models expect.",
+  "why": "It sits before the sampler and hands it both the prompts and the starting latent."
+ },
+ "LoadImageMask": {
+  "what": "Loads a black-and-white mask: white is where changes may happen.",
+  "why": "Feeds anything that works on part of a picture."
+ },
+ "ControlNetLoader": {
+  "what": "Loads a ControlNet: a guide that makes the picture follow a shape, a pose, edges or depth.",
+  "why": "Its ControlNet goes to an Apply ControlNet node."
+ },
+ "ControlNetApplyAdvanced": {
+  "what": "Adds the ControlNet's guidance to your prompts, with how strong and over which steps.",
+  "why": "It sits between the Text Encode nodes and the sampler, changing the prompts before they arrive."
+ },
+ "CLIPVisionLoader": {
+  "what": "Loads a model that reads pictures the way CLIP reads words.",
+  "why": "Feeds CLIP Vision Encode, for workflows that take a picture as a prompt."
+ },
+ "CLIPVisionEncode": {
+  "what": "Turns a picture into numbers that describe it, so a picture can guide the result like words do.",
+  "why": "Its output goes to a style or IP-Adapter node and from there to the sampler."
+ },
+ "FluxGuidance": {
+  "what": "Sets how closely a Flux model follows your prompt.",
+  "why": "Between the Text Encode node and the sampler: it adjusts the prompt numbers on the way through."
+ },
+ "ModelSamplingFlux": {
+  "what": "Tunes how a Flux model removes noise, based on the picture size.",
+  "why": "Between the loader and the sampler: it adjusts the model before sampling."
+ },
+ "ModelSamplingSD3": {
+  "what": "Tunes the noise schedule (shift) of SD3-style and many video models.",
+  "why": "Between the loader and the sampler: it adjusts the model before sampling."
+ },
+ "LatentUpscale": {
+  "what": "Makes a latent bigger, for a second, sharper pass.",
+  "why": "Between two samplers: the first draws small, the second adds detail at the larger size."
+ },
+ "LatentUpscaleBy": {
+  "what": "Makes a latent bigger by a factor, for a second pass.",
+  "why": "Between two samplers, the same as Upscale Latent."
+ },
+ "ImageScaleBy": {
+  "what": "Resizes a picture by a factor.",
+  "why": "After decoding, or before a step that needs a different size."
+ },
+ "RepeatLatentBatch": {
+  "what": "Copies a latent several times, to make several pictures in one go.",
+  "why": "Between the latent and the sampler."
+ },
+ "ImageBatch": {
+  "what": "Joins pictures into one batch.",
+  "why": "Feeds nodes that work on several pictures at once."
+ },
+ "EmptyHunyuanLatentVideo": {
+  "what": "A blank latent for a video: width, height and number of frames.",
+  "why": "The video sampler's starting point, like Empty Latent Image for pictures."
+ },
+ "EmptyLTXVLatentVideo": {
+  "what": "A blank latent for an LTX video.",
+  "why": "The video sampler's starting point."
+ },
+ "CreateVideo": {
+  "what": "Joins frames into a video, with sound if given.",
+  "why": "After decoding, ready for Save Video."
+ },
+ "SaveVideo": {
+  "what": "Saves the video to the output folder.",
+  "why": "An ending node: ComfyUI runs everything that leads into it."
+ },
+ "SaveAnimatedWEBP": {
+  "what": "Saves frames as an animated WEBP.",
+  "why": "An ending node for short animations."
+ },
+ "Note": {
+  "what": "A sticky note for people reading the workflow. ComfyUI skips it.",
+  "why": "It isn't wired to anything; it's there to explain."
+ },
+ "MarkdownNote": {
+  "what": "A formatted note for people reading the workflow. ComfyUI skips it.",
+  "why": "It isn't wired to anything; it's there to explain."
+ },
+ "PrimitiveNode": {
+  "what": "Holds one value (a number, some text, a seed) that several nodes can share.",
+  "why": "Wire it into many inputs and change it in one place."
+ },
+ "Reroute": {
+  "what": "A dot that bends a wire to keep the layout tidy. It changes nothing.",
+  "why": "Purely for neatness."
+ }
+}

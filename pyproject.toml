@@ -1,0 +1,10 @@
+[project]
+name = "comfyui-dpd-studio"
+description = "DPD Studio nodes for ComfyUI. First section: Comfy Blueprint, which shows where a render is and explains what every node does and why it's wired there."
+version = "0.1.0"
+license = { file = "LICENSE" }
+dependencies = []
+
+[tool.comfy]
+DisplayName = "DPD Studio"
+includes = []
