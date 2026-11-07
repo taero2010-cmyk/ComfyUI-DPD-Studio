@@ -238,7 +238,7 @@ function drawRails(ctx) {
 // ---------------------------------------------------------------- the lane picker
 const BADGE = 22;
 function badgeRect(n) { return [n.pos[0] + n.size[0] - BADGE - 30, n.pos[1] - TH() + (TH() - 18) / 2, BADGE, 18]; }
-const needs = n => (n.inputs || []).some(realInput);
+const needs = n => (n.inputs || []).some(realInput) || (n.outputs || []).length > 0;   // every node that takes or gives something
 function badgeHit(x, y, e) {
   for (const n of [...graph().nodes].reverse()) {
     if (!live(n) || !needs(n)) continue;
@@ -251,7 +251,7 @@ function drawBadges(ctx) {
   if (app.canvas.ds.scale < 0.45) return;
   graph().nodes.forEach(n => {
     if (!live(n) || !needs(n)) return;
-    const [x, y, w, h] = badgeRect(n), open = (n.inputs || []).some(i => realInput(i) && i.link == null);
+    const [x, y, w, h] = badgeRect(n), open = (n.inputs || []).some(i => realInput(i) && i.link == null) || (n.outputs || []).some(o => !(o.links && o.links.length));
     ctx.save();
     ctx.fillStyle = open ? "rgba(232,182,76,.18)" : "rgba(255,255,255,.06)";
     ctx.strokeStyle = open ? "#e8b64c" : "rgba(255,255,255,.25)"; ctx.lineWidth = 1;
@@ -271,21 +271,68 @@ function where(from, to) {
 let picker = null;
 function closePicker() { picker?.remove(); picker = null; removeEventListener("pointerdown", outside, true); }
 const outside = e => { if (picker && !picker.contains(e.target)) closePicker(); };
-function openPicker(n, cx, cy) {
+// ---- partners: the node a lonely input or output is waiting for. Common pairings first, then any node ComfyUI knows
+// that takes (or makes) the type. Their notes come from the Blueprint's notes.json.
+const USERS = { UPSCALE_MODEL: ["ImageUpscaleWithModel"], MODEL: ["KSampler", "LoraLoader"], CLIP: ["CLIPTextEncode", "LoraLoader"], VAE: ["VAEDecode", "VAEEncode"], LATENT: ["VAEDecode", "KSampler", "LatentUpscaleBy"], IMAGE: ["PreviewImage", "SaveImage", "ImageUpscaleWithModel", "VAEEncode"], CONDITIONING: ["KSampler", "ConditioningCombine"], CONTROL_NET: ["ControlNetApplyAdvanced"], CLIP_VISION: ["CLIPVisionEncode"], MASK: ["SetLatentNoiseMask", "InpaintModelConditioning"] };
+const MAKERS = { MODEL: ["CheckpointLoaderSimple", "UNETLoader"], CLIP: ["CheckpointLoaderSimple", "CLIPLoader"], VAE: ["CheckpointLoaderSimple", "VAELoader"], LATENT: ["EmptyLatentImage", "VAEEncode"], IMAGE: ["LoadImage", "VAEDecode"], CONDITIONING: ["CLIPTextEncode"], UPSCALE_MODEL: ["UpscaleModelLoader"], CONTROL_NET: ["ControlNetLoader"], CLIP_VISION: ["CLIPVisionLoader"], MASK: ["LoadImageMask"] };
+let NOTES = null;
+const notes = () => NOTES || (NOTES = fetch(new URL("../blueprint/notes.json", import.meta.url)).then(r => r.json()).catch(() => ({})));
+const typeInfo = t => { const c = LiteGraph.registered_node_types[t]; return c && c.nodeData ? c.nodeData : null; };
+const pretty = s => String(s).replace(/([a-z])([A-Z])/g, "$1 $2");
+const typeTitle = t => { const c = LiteGraph.registered_node_types[t]; return (c && (c.title || (c.nodeData && c.nodeData.display_name))) || pretty(t); };
+const reqTypes = d => Object.values((d.input && d.input.required) || {}).map(v => Array.isArray(v) ? v[0] : v).filter(v => typeof v === "string");
+function partners(type, gives) {
+  const listed = ((gives ? USERS : MAKERS)[type] || []).filter(t => typeInfo(t));
+  if (listed.length) return listed.slice(0, 3);
+  const all = Object.keys(LiteGraph.registered_node_types).filter(t => { const d = typeInfo(t); return d && !d.deprecated && !d.dev_only && (gives ? reqTypes(d).includes(type) : (d.output || []).includes(type)); });
+  const core = t => /^(nodes|comfy_extras)/.test(typeInfo(t).python_module || "");
+  return all.sort((a, b) => core(b) - core(a)).slice(0, 3);
+}
+// drop a partner into n's stack (or start one with n), wire it to n, and let it pick up anything else it needs from the stack
+function addPartner(n, type, gives, slot) {
+  const g = graph(), p = LiteGraph.createNode(type); if (!p) return;
+  const group = stackOf(n) ? members(stackOf(n)) : [n];
+  const firstCol = columns(group)[0].nodes, low = firstCol[firstCol.length - 1];
+  p.pos = [low.pos[0], low.pos[1] + low.size[1] + GAP + TH()];
+  g.beforeChange?.();
+  g.add(p);
+  if (gives) { const i = (p.inputs || []).findIndex(x => realInput(x) && fits(n.outputs[slot].type, x.type)); if (i >= 0) n.connect(slot, p, i); }
+  else { const j = (p.outputs || []).findIndex(o => fits(o.type, n.inputs[slot].type)); if (j >= 0) p.connect(j, n, slot); }
+  pairs(p, group).forEach(q => q.src.connect(q.out, q.dst, q.in));
+  const id = stackOf(n) || `s${Date.now().toString(36)}`;
+  [n, p, ...group].forEach(m => { m.properties = m.properties || {}; m.properties.dpdStack = id; });
+  g.afterChange?.();
+  if (lineUpOn()) lineUp(members(id));
+  app.canvas.setDirty(true, true);
+}
+async function openPicker(n, cx, cy) {
   closePicker();
-  const g = graph(), rows = [];
+  const g = graph(), rows = [], gives = [], N = await notes();
+  const near = (a, b) => Math.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1]);
   (n.inputs || []).forEach((inp, i) => {
     if (!realInput(inp)) return;
     const l = inp.link != null && linkById(inp.link), have = l ? g.getNodeById(l.origin_id) : null;
-    const options = g.nodes.filter(m => m !== n && live(m)).flatMap(m => (m.outputs || []).map((o, j) => fits(o.type, inp.type) ? { m, j, o } : null).filter(Boolean))
-      .sort((p, q) => Math.hypot(p.m.pos[0] - n.pos[0], p.m.pos[1] - n.pos[1]) - Math.hypot(q.m.pos[0] - n.pos[0], q.m.pos[1] - n.pos[1]));
-    rows.push({ inp, i, have, options });
+    const options = g.nodes.filter(m => m !== n && live(m)).flatMap(m => (m.outputs || []).map((o, j) => fits(o.type, inp.type) ? { m, j, o } : null).filter(Boolean)).sort((p, q) => near(p.m, n) - near(q.m, n));
+    rows.push({ inp, i, have, options, add: options.length ? [] : partners(inp.type, false) });
   });
+  (n.outputs || []).forEach((out, j) => {
+    const used = (out.links || []).map(id => linkById(id)).filter(Boolean).map(l => g.getNodeById(l.target_id)).filter(Boolean);
+    const options = g.nodes.filter(m => m !== n && live(m)).flatMap(m => (m.inputs || []).map((x, i) => realInput(x) && x.link == null && fits(out.type, x.type) ? { m, i, x } : null).filter(Boolean)).sort((p, q) => near(p.m, n) - near(q.m, n));
+    gives.push({ out, j, used, options, add: partners(out.type, true).filter(t => !used.some(u => u.type === t)) });
+  });
+  const tip = t => { const w = N[t] && N[t].what; return w ? `<small>${esc(w.length > 110 ? w.slice(0, 108) + "…" : w)}</small>` : ""; };
+  const addBtn = (t, side, k) => `<button class="add" data-add="${esc(t)}" data-side="${side}" data-k="${k}">＋ Add <b>${esc(typeTitle(t))}</b>${tip(t)}</button>`;
   picker = document.createElement("div");
   picker.className = "cst-pick";
-  picker.innerHTML = `<h4>${esc(n.title)} <span>lanes</span>${stackOf(n) ? `<button class="out" data-out="1">Take out of stack</button>` : ""}</h4>` + rows.map((r, k) => `<section><p><b>${esc(r.inp.label || r.inp.name)}</b> needs ${article(String(r.inp.type))} ${esc(r.inp.type)}${r.have ? ` · now from <i>${esc(r.have.title)}</i>` : ""}</p>${r.options.length ? r.options.slice(0, 6).map((o, q) => `<button data-k="${k}" data-q="${q}"${r.have === o.m ? ' class="on"' : ""}>from <b>${esc(o.m.title)}</b><small>${esc(o.o.label || o.o.name || o.o.type)} · ${esc(where(o.m, n))}</small></button>`).join("") : `<em>Nothing on the canvas makes ${article(String(r.inp.type))} ${esc(r.inp.type)} yet.</em>`}</section>`).join("");
+  picker.innerHTML = `<h4>${esc(n.title)} <span>lanes</span>${stackOf(n) ? `<button class="out" data-out="1">Take out of stack</button>` : ""}</h4>`
+    + (rows.length ? `<h5>Takes</h5>` : "") + rows.map((r, k) => `<section><p><b>${esc(r.inp.label || r.inp.name)}</b> needs ${article(String(r.inp.type))} ${esc(r.inp.type)}${r.have ? ` · now from <i>${esc(r.have.title)}</i>` : ""}</p>${r.options.slice(0, 6).map((o, q) => `<button data-k="${k}" data-q="${q}"${r.have === o.m ? ' class="on"' : ""}>from <b>${esc(o.m.title)}</b><small>${esc(o.o.label || o.o.name || o.o.type)} · ${esc(where(o.m, n))}</small></button>`).join("")}${r.options.length ? "" : `<em>Nothing on the canvas makes ${article(String(r.inp.type))} ${esc(r.inp.type)} yet.</em>` + r.add.map(t => addBtn(t, "in", k)).join("")}</section>`).join("")
+    + (gives.length ? `<h5>Gives</h5>` : "") + gives.map((r, k) => `<section><p><b>${esc(r.out.label || r.out.name || r.out.type)}</b> ${esc(r.out.type)}${r.used.length ? ` · goes to <i>${esc(r.used.map(u => u.title).join(", "))}</i>` : " · not used yet"}</p>${r.options.slice(0, 4).map((o, q) => `<button data-g="${k}" data-q="${q}">to <b>${esc(o.m.title)}</b><small>${esc(o.x.label || o.x.name)} · ${esc(where(n, o.m))}</small></button>`).join("")}${r.used.length || r.options.length ? "" : `<em>Nothing on the canvas can use ${article(String(r.out.type))} ${esc(r.out.type)} yet. Its partner:</em>` + r.add.map(t => addBtn(t, "out", k)).join("")}</section>`).join("");
   picker.addEventListener("click", e => {
     if (e.target.closest("button[data-out]")) { unstack(n); closePicker(); return; }
+    const a = e.target.closest("button[data-add]");
+    if (a) { const k = +a.dataset.k; if (a.dataset.side === "out") addPartner(n, a.dataset.add, true, gives[k].j); else addPartner(n, a.dataset.add, false, rows[k].i); closePicker(); return; }
+    const gb = e.target.closest("button[data-g]");
+    if (gb) { const r = gives[+gb.dataset.g], o = r.options[+gb.dataset.q]; g.beforeChange?.(); n.connect(r.j, o.m, o.i); g.afterChange?.(); app.canvas.setDirty(true, true); closePicker(); return; }
     const b = e.target.closest("button[data-k]"); if (!b) return;
     const r = rows[+b.dataset.k], o = r.options[+b.dataset.q];
     g.beforeChange?.(); o.m.connect(o.j, n, r.i); g.afterChange?.();
@@ -300,7 +347,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const css = document.createElement("style");
 css.textContent = `
 .cst-pick{position:fixed;z-index:10000;width:330px;max-height:70vh;overflow:auto;padding:10px 12px;background:#1b1a21;border:1px solid #e8b64c;border-radius:4px;box-shadow:0 14px 40px rgba(0,0,0,.55);font:13px/1.4 system-ui,sans-serif;color:#e9e6ef}
-.cst-pick h4{display:flex;align-items:center;gap:6px;margin:0 0 8px;font:700 14px system-ui}.cst-pick h4 button.out{width:auto;margin:0 0 0 auto;padding:3px 8px;font-size:12px;border-color:#e8b64c}.cst-pick h4 span{color:#e8b64c;font-weight:600}
+.cst-pick h4{display:flex;align-items:center;gap:6px;margin:0 0 8px;font:700 14px system-ui}.cst-pick h4 button.out{width:auto;margin:0 0 0 auto;padding:3px 8px;font-size:12px;border-color:#e8b64c}.cst-pick h4 span{color:#e8b64c;font-weight:600}.cst-pick h5{margin:10px 0 4px;font:700 10.5px system-ui;letter-spacing:.08em;text-transform:uppercase;color:#8d879a}.cst-pick button.add{border-style:dashed;border-color:#e8b64c}.cst-pick button.add:hover{border-style:solid}
 .cst-pick section{margin:0 0 10px}.cst-pick p{margin:0 0 4px;color:#cfcad8}.cst-pick p i{color:#fff;font-style:normal}
 .cst-pick button{display:block;width:100%;text-align:left;margin:0 0 3px;padding:5px 8px;border:1px solid #3a3644;border-radius:3px;background:rgba(255,255,255,.03);color:#e9e6ef;font:13px system-ui;cursor:pointer}
 .cst-pick button:hover{border-color:${GREEN};background:rgba(63,207,116,.1)}.cst-pick button.on{border-color:#5a5666;opacity:.7}

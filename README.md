@@ -90,6 +90,8 @@ The wire itself is an ordinary ComfyUI link. Renders are exactly the same, and a
 ### The lane picker
 The **⇅** badge on a node's title opens a list of everything that node can take and every node on the canvas that can feed it, nearest first: *"vae needs a VAE: from Load Checkpoint · 5 boxes up, through the lanes"*. Pick one and it's wired.
 
+Every node has the badge, including ones that only *give*, like Load Upscale Model. When nothing on the canvas can use what a node makes (or make what it needs), the picker names its **partner**, with a note on what that partner does: *"Nothing on the canvas can use an UPSCALE_MODEL yet. Its partner: ＋ Add Upscale Image (using Model)"*. One click adds the partner to the stack, wired, and it picks up anything else it needs from the stack.
+
 Turn it all off under **Settings → Comfy Blueprint → Conduit**.
 
 <br clear="right">
