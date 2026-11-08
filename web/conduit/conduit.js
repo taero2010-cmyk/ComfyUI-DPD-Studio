@@ -59,6 +59,7 @@ function fit(d, n) {
   const pos = side === "right" ? [b.x + b.w + GAP, n.pos[1]] : side === "left" ? [b.x - a.w - GAP, n.pos[1]]
     : side === "below" ? [b.x, b.y + b.h + GAP + TH()] : [b.x, b.y - a.h - GAP + TH()];
   // judge the wiring as if d were already in place, so "top to bottom" reads right
+  if ((side === "right" || side === "left") && !stackOf(d)) { const alt = planAlt(d, n); if (alt) return { d, n, side, pairs: [], alt, pos: [b.x + b.w + GAP, n.pos[1]], gap: g }; }
   const was = [...d.pos]; d.pos[0] = pos[0]; d.pos[1] = pos[1];
   const p = pairs(d, stackOf(n) ? members(stackOf(n)) : [n]);
   d.pos[0] = was[0]; d.pos[1] = was[1];
@@ -79,7 +80,7 @@ function bestFit(d, crew = []) {
   graph().nodes.forEach(n => {
     if (n === d || !live(n) || skip.has(n) || (stackOf(d) && stackOf(n) === stackOf(d))) return;
     const f = fit(d, n);
-    if (f && !f.insert && !free(d, f.pos, skip)) return;   // a slot-in makes its own room
+    if (f && !f.insert && !f.alt && !free(d, f.pos, skip)) return;   // a slot-in or an alternative makes its own room
     // the node you are clearly closest to wins; between near-equals, the one that wires more
     if (f && (!best || (Math.abs(f.gap - best.gap) > 20 ? f.gap < best.gap : f.pairs.length > best.pairs.length || (f.pairs.length === best.pairs.length && f.gap < best.gap)))) best = f;
   });
@@ -91,7 +92,7 @@ function canvasPos(e) { return app.canvas.convertEventToCanvasOffset(e); }
 function onDown(e) {
   if (!ON() || e.button !== 0) return;
   const [x, y] = canvasPos(e);
-  if (switchHit(x, y, e) || badgeHit(x, y, e)) return;
+  if (switchHit(x, y, e) || altHit(x, y, e) || badgeHit(x, y, e)) return;
   const n = graph().getNodeOnPos(x, y);
   if (!n) return;
   // dragging a node of a stack carries the whole stack; Alt is ComfyUI's copy-and-drag, which moves the copy alone
@@ -123,6 +124,7 @@ function onUp(e) {
   }, 0);
 }
 function snap(c, d) {
+  if (c.alt) { const id = stackOf(c.n) || `s${Date.now().toString(36)}`; if (!stackOf(c.n)) { c.n.properties = c.n.properties || {}; c.n.properties.dpdStack = id; } doAlt(c.alt, members(id), id); return; }
   if (c.insert) { const id = stackOf(c.n) || `s${Date.now().toString(36)}`; if (!stackOf(c.n)) { c.n.properties = c.n.properties || {}; c.n.properties.dpdStack = id; } doInsert(c.insert, members(id), id); return; }
   const dx = c.pos[0] - c.d.pos[0], dy = c.pos[1] - c.d.pos[1];
   c.d.pos[0] = c.pos[0]; c.d.pos[1] = c.pos[1];
@@ -222,7 +224,7 @@ function drawLane(ctx, a, b, l, lane) {
   const seam = down ? A.y + A.h + step : A.y - step, x = lane.x, r = 5;
   ctx.save();
   ctx.strokeStyle = laneColor(l); ctx.lineWidth = 2.5; ctx.lineJoin = "round"; ctx.lineCap = "round";
-  const dst = g.getNodeById(l.target_id); if (src.mode === 4 || (dst && dst.mode === 4)) { ctx.setLineDash([6, 5]); ctx.globalAlpha = 0.55; }
+  const dst = g.getNodeById(l.target_id); if (src.mode === 4 || src.mode === 2 || (dst && (dst.mode === 4 || dst.mode === 2))) { ctx.setLineDash([6, 5]); ctx.globalAlpha = 0.55; }
   ctx.beginPath();
   ctx.moveTo(a[0], a[1]);
   ctx.arcTo(a[0] + 12, a[1], a[0] + 12, seam, r);              // out of the output, down to the seam under its box
@@ -280,7 +282,7 @@ function closePicker() { picker?.remove(); picker = null; removeEventListener("p
 const outside = e => { if (picker && !picker.contains(e.target)) closePicker(); };
 // ---- partners: the node a lonely input or output is waiting for. Common pairings first, then any node ComfyUI knows
 // that takes (or makes) the type. Their notes come from the Blueprint's notes.json.
-const USERS = { UPSCALE_MODEL: ["ImageUpscaleWithModel"], MODEL: ["KSampler", "LoraLoader"], CLIP: ["CLIPTextEncode", "LoraLoader"], VAE: ["VAEDecode", "VAEEncode"], LATENT: ["VAEDecode", "KSampler", "LatentUpscaleBy"], IMAGE: ["PreviewImage", "SaveImage", "ImageUpscaleWithModel", "VAEEncode"], CONDITIONING: ["KSampler", "ConditioningCombine"], CONTROL_NET: ["ControlNetApplyAdvanced"], CLIP_VISION: ["CLIPVisionEncode"], MASK: ["SetLatentNoiseMask", "InpaintModelConditioning"] };
+const USERS = { UPSCALE_MODEL: ["ImageUpscaleWithModel"], MODEL: ["KSampler", "LoraLoader"], CLIP: ["CLIPTextEncode", "LoraLoader"], VAE: ["VAEDecode", "VAEEncode"], LATENT: ["VAEDecode", "KSampler", "LatentUpscaleBy"], IMAGE: ["PreviewImage", "SaveImage", "ImageUpscaleWithModel", "VAEEncode"], CONDITIONING: ["KSampler", "ConditioningCombine"], CONTROL_NET: ["ControlNetApplyAdvanced"], CLIP_VISION: ["CLIPVisionEncode"], MASK: ["SetLatentNoiseMask", "InpaintModelConditioning"], GUIDE_DATA: ["LTXDirectorGuideCS25", "LTXDirectorGuide"], MOTION_GUIDE_DATA: ["LTXDirectorGuideCS25", "LTXDirectorGuide"] };
 const MAKERS = { MODEL: ["CheckpointLoaderSimple", "UNETLoader"], CLIP: ["CheckpointLoaderSimple", "CLIPLoader"], VAE: ["CheckpointLoaderSimple", "VAELoader"], LATENT: ["EmptyLatentImage", "VAEEncode"], IMAGE: ["LoadImage", "VAEDecode"], CONDITIONING: ["CLIPTextEncode"], UPSCALE_MODEL: ["UpscaleModelLoader"], CONTROL_NET: ["ControlNetLoader"], CLIP_VISION: ["CLIPVisionLoader"], MASK: ["LoadImageMask"] };
 let NOTES = null;
 const notes = () => NOTES || (NOTES = fetch(new URL("../blueprint/notes.json", import.meta.url)).then(r => r.json()).catch(() => ({})));
@@ -458,6 +460,70 @@ function drawSwitches(ctx) {
   });
 }
 
+// ---------------------------------------------------------------- either/or: two ways to make the same thing
+// Drop a node next to one that makes the same outputs (another sampler, another engine) and it becomes its
+// alternative: it sits beside it, takes the same inputs from the stack, and a switch on each picks which one runs.
+// Switching reconnects everything that used the old one to the new one and mutes the other, so only one runs.
+const NEVER = 2;
+const altOf = n => n.properties && n.properties.dpdAlt;
+const alts = id => graph().nodes.filter(m => altOf(m) === id);
+const usedOutputs = n => (n.outputs || []).map((o, j) => ({ o, j })).filter(x => x.o.links && x.o.links.length);
+function planAlt(d, n) {
+  if (d === n || altOf(d) || d.type === "Reroute") return null;
+  const used = usedOutputs(n); if (!used.length) return null;
+  const map = used.map(({ o, j }) => ({ from: j, to: (d.outputs || []).findIndex(x => x.type === o.type) }));
+  return map.every(m => m.to >= 0) ? { d, n, map } : null;
+}
+function doAlt(p, group, stackId) {
+  const g = graph(), { d, n } = p, gid = altOf(n) || `a${Date.now().toString(36)}`;
+  g.beforeChange?.();
+  n.properties.dpdAlt = gid;
+  d.properties = d.properties || {}; d.properties.dpdAlt = gid; d.properties.dpdStack = stackId;
+  // it takes the same inputs as the one it stands in for
+  (d.inputs || []).forEach((inp, i) => {
+    if (!realInput(inp) || inp.link != null) return;
+    const twin = (n.inputs || []).find(x => realInput(x) && x.link != null && x.type === inp.type && (x.name === inp.name || !(d.inputs || []).some(y => y !== inp && y.name === x.name)));
+    const l = twin && linkById(twin.link); if (l) g.getNodeById(l.origin_id).connect(l.origin_slot, d, i);
+  });
+  pairs(d, group).forEach(q => { if (q.dst === d) q.src.connect(q.out, q.dst, q.in); });
+  d.mode = NEVER;                                            // the one already there keeps running until you switch
+  d.pos = [n.pos[0] + n.size[0] + GAP, n.pos[1]];
+  g.afterChange?.();
+  if (lineUpOn()) lineUp(members(stackId));
+  app.canvas.setDirty(true, true);
+}
+function choose(n) {
+  const g = graph(), group = alts(altOf(n)), was = group.find(m => m !== n && m.mode !== NEVER);
+  g.beforeChange?.();
+  if (was) usedOutputs(was).forEach(({ o, j }) => {
+    const k = (n.outputs || []).findIndex(x => x.type === o.type); if (k < 0) return;
+    o.links.map(linkById).filter(Boolean).map(l => ({ t: g.getNodeById(l.target_id), s: l.target_slot })).forEach(u => u.t && n.connect(k, u.t, u.s));
+  });
+  group.forEach(m => { m.mode = m === n ? ALWAYS : NEVER; });
+  g.afterChange?.(); app.canvas.setDirty(true, true);
+}
+function altHit(x, y, e) {
+  for (const n of [...graph().nodes].reverse()) {
+    if (!live(n) || !altOf(n)) continue;
+    const [sx, sy, sw, sh] = switchRect(n);
+    if (x >= sx - 2 && x <= sx + sw + 2 && y >= sy - 3 && y <= sy + sh + 3) { e.stopImmediatePropagation(); e.preventDefault(); if (n.mode === NEVER) choose(n); return true; }
+  }
+  return false;
+}
+function drawAlts(ctx) {
+  if (app.canvas.ds.scale < 0.45) return;
+  graph().nodes.forEach(n => {
+    if (!live(n) || !altOf(n)) return;
+    const [x, y, w, h] = switchRect(n), on = n.mode !== NEVER;
+    ctx.save();
+    ctx.fillStyle = on ? GREEN : "rgba(255,255,255,.08)"; ctx.strokeStyle = on ? GREEN : "#8d879a"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - 6, y, w + 6, h, h / 2) : ctx.rect(x - 6, y, w + 6, h); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = on ? "#06210f" : "#cfcad8"; ctx.font = "bold 9px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(on ? "IN USE" : "USE", x + w / 2 - 3, y + h / 2 + 0.5);
+    ctx.restore();
+  });
+}
+
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const css = document.createElement("style");
 css.textContent = `
@@ -490,6 +556,12 @@ function drawMagnet(ctx) {
   ctx.shadowColor = GREEN; ctx.shadowBlur = 14; ctx.lineWidth = 2.5;
   ctx.strokeRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4);
   ctx.shadowBlur = 0;
+  if (c.alt) {
+    ctx.font = "bold 13px system-ui"; const text = `Alternative to ${c.n.title}: a switch picks which one runs`, w2 = ctx.measureText(text).width + 16;
+    ctx.fillStyle = "rgba(14,24,18,.92)"; ctx.fillRect(ghost.x, ghost.y - 26, w2, 22); ctx.strokeRect(ghost.x, ghost.y - 26, w2, 22);
+    ctx.fillStyle = "#c9f5d9"; ctx.textBaseline = "middle"; ctx.fillText(text, ghost.x + 8, ghost.y - 15);
+    ctx.restore(); return;
+  }
   const name = s => s.label || s.name || s.type;
   const label = c.pairs.map(p => `${name(p.src.outputs[p.out])} → ${name(p.dst.inputs[p.in])}${p.src !== c.n && p.dst !== c.n ? " (lane)" : ""}`).join("   ");
   // and a preview of each wire it will make
@@ -514,6 +586,7 @@ app.registerExtension({
     if (!ON()) return [];
     const items = [], sel = selected();
     if (sel.length > 1 && sel.includes(node)) items.push({ content: `Line up the ${sel.length} selected nodes`, callback: () => lineUp(sel) });
+    if (altOf(node)) items.push(node.mode === 2 ? { content: "Use this one instead", callback: () => choose(node) } : { content: "In use (pick the other with its switch)", disabled: true }, { content: "Stop being alternatives", callback: () => { graph().beforeChange?.(); alts(altOf(node)).forEach(m => { delete m.properties.dpdAlt; if (m.mode === 2) m.mode = 0; }); graph().afterChange?.(); app.canvas.setDirty(true, true); } });
     if (stackOf(node)) items.push({ content: "Line up this stack", callback: () => lineUp(members(stackOf(node))) }, { content: "Take out of stack", callback: () => unstack(node) }, { content: "Take out of stack and unplug its wires", callback: () => unstack(node, true) }, { content: "Take the whole stack apart", callback: () => takeApart(node) });
     return items;
   },
@@ -532,7 +605,7 @@ app.registerExtension({
       return renderLink.call(this, ctx, a, b, link, skipBorder, flow, color, ...rest);
     };
     const fg = app.canvas.onDrawForeground;
-    app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawMagnet(ctx); drawBadges(ctx); drawSwitches(ctx); } };
-    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack, lineUp, columns, planInsert, doInsert, insertLabel };
+    app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawMagnet(ctx); drawBadges(ctx); drawSwitches(ctx); drawAlts(ctx); } };
+    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack, lineUp, columns, planInsert, doInsert, insertLabel, planAlt, doAlt, choose };
   },
 });

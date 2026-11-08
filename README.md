@@ -55,7 +55,7 @@ Add it from **utils → Comfy Blueprint**: a small came from / now / next box fo
 "KSampler": { "what": "What it does.", "why": "Why it's wired where it is." }
 ```
 
-Pull requests with notes for more nodes are very welcome. That's how this gets better for everyone.
+Notes already cover ComfyUI's core nodes and the whole Stubelius Ultimate LTX 2.5 pack (the LTX Director CS, its Guide, Seeds, Finish and the rest). Pull requests with notes for more nodes are very welcome. That's how this gets better for everyone.
 
 <br clear="right">
 
@@ -83,6 +83,9 @@ Some nodes start something rather than continue it: a LoRA, an upscale model, a 
 
 ### An on/off switch for each one
 A starting point that slotted itself in gets a small **switch** beside its ⇅ badge. It turns the starting point and its partner on and off together. Switched off, they're bypassed: the picture (or model, or prompts) passes straight through as if they weren't there, so you can keep an upscaler in your stack and skip it for a quick run. Switched-off units fade and their lane wires turn dashed. The setting is saved with the workflow.
+
+### Either/or: two ways to make the same thing
+Drop a node **beside** one that makes the same things (another sampler, another video engine) and it becomes its **alternative**: it takes the same inputs from the stack and waits, muted. Each one shows an **IN USE** / **USE** pill; click **USE** and everything that used the first now uses the second, and the first is muted, so only one ever runs. Right-click either one for **Use this one instead** or **Stop being alternatives**.
 
 ### Stacks
 Snapped nodes become one stack and move together: drag any member and the whole stack follows. To take a node out, **right-click it → Take out of stack** (or use the button in its ⇅ picker). **Take out of stack and unplug its wires** does the same and unplugs every wire too. **Take the whole stack apart** is in the same menu.

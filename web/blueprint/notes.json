@@ -254,5 +254,81 @@
  "LongTakeRelayVSR": {
   "what": "A fast 4x video upscale. Every 15 frames it draws one sharp keyframe in a single Wan step, and a tiny network carries that detail to the frames in between. Here it runs about 13 times faster than SeedVR2 with less flicker; SeedVR2 keeps faces a touch truer.",
   "why": "It comes last, after the video is decoded: upscaling only the finished frames is far cheaper than rendering big from the start. It frees the graphics card of every other model first, because it needs about 15 GB. Its counter is frames done."
+ },
+ "LTXDirectorCS25": {
+  "what": "The Director: a timeline for one LTX 2.5 video. Prompts cut into segments over time, keyframes (first, middle and last frames), motion clips, sound and characters all sit on one track, and it turns them into what the sampler needs.",
+  "why": "It sits between the loaders and the sampler. It takes the model and text reader, and hands out a patched model, the prompts timed to each segment, the video and audio latents, and the guide data for the Director Guide."
+ },
+ "LTXDirectorGuideCS25": {
+  "what": "Puts the Director's pictures and motion clips into the video: each keyframe is encoded and pinned to its frame, and motion clips steer the movement (IC-LoRA).",
+  "why": "It comes right after the Director and before the sampler: it takes the Director's guide data and the prompts and latent, and hands the sampler the guided versions."
+ },
+ "LTXDirectorCropGuidesCS25": {
+  "what": "Removes the extra guide frames that the Director Guide added to the end of the latent.",
+  "why": "It goes after the sampler, before decoding: the guide frames helped steer the video but aren't part of it, so they come off before you see it."
+ },
+ "CleanLatentSliceCS25": {
+  "what": "Cuts a clean stretch of frames out of a video latent, from a start frame for a set length.",
+  "why": "Used after sampling to keep only the real frames, for example the clean_latent_frames count the Director reports."
+ },
+ "LTXChunkWriterCS25": {
+  "what": "Writes one chunk of a long video out as picture frames and copies its last frames into ComfyUI's input folder, ready to be the first frames of the next chunk.",
+  "why": "It sits after decoding and passes the frames on unchanged, so a long video can be built chunk by chunk, each starting where the last one ended."
+ },
+ "LTXChunkAssemblerCS25": {
+  "what": "Joins all the chunks of a run into one continuous picture sequence, cross-fading the overlapping frames.",
+  "why": "The last step of a chunked video: it writes straight to disk because a long video is far too big to hold in memory."
+ },
+ "StubeliusLTXSetup": {
+  "what": "Decides how the seeds are rendered: full size, draft or low VRAM, how many seeds, and the speed-ups.",
+  "why": "One of the Setup window's nodes: the Seeds and Finish nodes read their settings from it."
+ },
+ "StubeliusLTXSeedSamplers": {
+  "what": "Picks a sampler for each seed, so the seeds can be rendered differently and compared.",
+  "why": "Part of Setup: the Seeds node uses it for each version it renders."
+ },
+ "StubeliusLTXModels": {
+  "what": "Loads everything LTX 2.5 needs in one place: the video model (safetensors or GGUF), LoRAs, the Gemma text encoder, the video and audio VAEs, the latent upscaler and memory options.",
+  "why": "The start of the chain: every other node in the workflow gets its models from here."
+ },
+ "StubeliusLTXSeeds": {
+  "what": "Renders 1 to 4 versions of the video (seeds) at the first-pass size, each with its sound.",
+  "why": "It takes the Director's plan and the Setup's settings; you watch the versions side by side and pick a winner before spending time on the finish."
+ },
+ "StubeliusLTXSeedPreviews": {
+  "what": "Plays every seed side by side, in sync, with sound: solo, A/B split or full size, and lets you pick the winner.",
+  "why": "It shows what Seeds rendered, so only the winner goes on to the Finish."
+ },
+ "StubeliusLTXFinish": {
+  "what": "Finishes the winning seed: an optional refine pass, the final resolution up to 4K, the final frame rate (RIFE) and the upscaler (RTX VSR or DLSS5).",
+  "why": "The last stage: it only runs on the seed you picked, and reuses the cached seeds instead of rendering them again."
+ },
+ "StubeliusLTXOutput": {
+  "what": "The finish settings and export: where the finished video goes and in what form.",
+  "why": "Read by the Finish node; it sits in the Output window next to a split view for comparing."
+ },
+ "StubeliusLTXTheme": {
+  "what": "Sets the colour theme of the workflow's windows.",
+  "why": "Purely looks: it changes nothing in the video."
+ },
+ "StubeliusLTXLivePreview": {
+  "what": "Shows the seeds and the finish while they are still being sampled.",
+  "why": "A window onto the work in progress, so you can stop early if it's going wrong."
+ },
+ "StubeliusLTXColorLock": {
+  "what": "Brings back the original colours after DLSS5 upscaling, which can shift them.",
+  "why": "It goes right after the DLSS5 upscale, comparing against the frames from before."
+ },
+ "StubeliusLTXRIFEToFPS": {
+  "what": "Raises the frame rate with RIFE frame interpolation, keeping hard cuts clean instead of smearing across them.",
+  "why": "Part of the finish, after the video is decoded: more frames are drawn in between the ones that exist."
+ },
+ "StubeliusLTXSeedHunt": {
+  "what": "The older way to try several seeds. Kept so old workflows still open; the Ultimate LTX Seeds node replaces it.",
+  "why": "Only in workflows made before the four-window version."
+ },
+ "StubeliusLTXRefine": {
+  "what": "The older second-pass refine. Kept so old workflows still open; the Finish node's refine replaces it.",
+  "why": "Only in workflows made before the four-window version."
  }
 }
