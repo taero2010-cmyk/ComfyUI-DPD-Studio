@@ -6,6 +6,7 @@ Free tools for people who can't afford the paid ones. These come out of **DPD St
 | --- | --- |
 | [Comfy Blueprint](#comfy-blueprint) | See where your render is, and learn what every node does and why it's wired there |
 | [Comfy Conduit](#comfy-conduit) | Magnets, stacks and passthrough lanes: build a workflow by snapping nodes together, with no long wires |
+| [Drop Sheet](#drop-sheet) | One beautiful page instead of a tangle: drop ordinary nodes on it and it lays them out, wires them and shows the result |
 
 More sections are on the way.
 
@@ -124,6 +125,52 @@ Every node has the badge, including ones that only *give*, like Load Upscale Mod
 Turn it all off under **Settings → Comfy Blueprint → Conduit**.
 
 <br clear="right">
+
+## Drop Sheet
+
+**Design your workflow like a page, not a plate of spaghetti.**
+
+The Drop Sheet (**Add Node → DPD Studio → Drop Sheet**) starts as an empty page with zones: **Loaders, Sampler, Prompt, Canvas, Pictures and Results**. Drag any ordinary ComfyUI node onto it and the node finds its zone, tucks itself under the paper, and its zone lights up with just the settings that matter. The sheet does the wiring for you. You never draw a wire inside it.
+
+The Drop Sheet is a node you add yourself, so it works in any workflow you put it in, with or without a Comfy Blueprint node.
+
+### Zones that grow
+- **Loaders**, top left, is one box: your model, its text encoder, the **VAE** (the model's own, or pick any VAE file), every **LoRA** (reorder them with ↑) and other models such as upscale or ControlNet models.
+- Each LoRA rides **the model listed above it**. Wan 2.2's high-noise LoRA goes on the high-noise model, and the low-noise LoRA on the low-noise model.
+- Any other node gets **a tile of its own**, built from its settings, and joins the chain where it belongs:
+  - picture steps (an upscaler) come after the picture is made;
+  - model steps come after the LoRAs;
+  - prompt and latent steps come before the sampler.
+- The sheet grows **down and sideways**: from 2 columns to 3 or 4 as it fills, or pick with **Columns**.
+
+### Tiles you can arrange
+Drag a tile by its **⠿** grip to move it, and make it wide or narrow with **↔**. Because the wiring is invisible, **the order of the tiles is the order things happen**: put the face fix before the upscale by dragging its tile in front.
+
+### The plumbing stays out of sight
+VAE Decode and Encode, an empty negative prompt and the start picture's loader are made and wired for you. A drawer at the bottom lists them for anyone curious.
+
+### Red boxes that fix themselves
+When something is missing, its tile turns red and says what it needs in plain words, with a button that adds the right node, already wired. For example: *"No sampler: nothing will be painted. ＋ KSampler"*, or *"Needs an UPSCALE_MODEL. ＋ Load Upscale Model"*.
+
+### Image and video
+- **Image:** Text → image, or Image → image, with a start picture, an upload button and a **Change** slider (the sampler's denoise).
+- **Video:**
+  - **Frames** (size and length, or **Wan Image to Video**) and a **Start frame**.
+  - **Samplers that stack** in tile order. Wan 2.2 takes two: high noise, then low noise.
+  - Steps that take both prompts (**LTX Conditioning**, **Wan Image to Video**) are wired into both.
+  - **Save Video** gets its Create Video step made for it, at the right frame rate.
+- Results show **in the sheet**, pictures and playing videos alike, and the sheet grows to fit them.
+
+### Sheets wired together
+Every sheet has a **picture in** and a **picture out** socket. Wire one sheet's out into another's in, to as many sheets as you like and in chains as long as you like. The next sheet starts from the first sheet's finished picture: a video's start frame, an image-to-image, or any step that wants a picture.
+
+### Make it yours
+- **Simple / Standard / Everything:** from just what a first picture needs to every setting of every part, the plumbing too.
+- **Font and size** for the sheet's own words, including easy-to-read fonts for big screens.
+- **Look:** paper colour (presets such as Forest, Midnight and Paper, or any colour), accent colour, corner roundness, and cozy or compact spacing. On light paper the words turn dark by themselves.
+- While it renders, **the working tile glows** and the sampler shows its progress.
+
+**Under the hood:** the nodes you drop stay real ComfyUI nodes, tucked under the sheet. The workflow runs exactly as if you had wired it by hand, and the sheet itself never goes to the server.
 
 ## License
 
