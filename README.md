@@ -74,8 +74,18 @@ Snapping wires to the **whole stack**, not just the node you dropped next to. A 
 
 Alt-drag is still ComfyUI's own copy-and-drag; the copy starts outside any stack.
 
+### Starting points slot themselves in
+Some nodes start something rather than continue it: a LoRA, an upscale model, a ControlNet. Drop one onto a stack and it slots into the chain where it belongs, even when nothing in the stack takes it yet. The green line shows where it will go, and the label says what will happen.
+
+- **Load LoRA** slots in after Load Checkpoint: it takes the model and CLIP, and the KSampler and prompts now get theirs from the LoRA.
+- **Load Upscale Model** brings its partner, *Upscale Image (using Model)*: *"Adds Upscale Image (using Model) after VAE Decode, ahead of Preview Image"*. The picture now goes through the upscaler on its way to Preview.
+- **Load ControlNet** brings *Apply ControlNet* and slots it between the prompts and the KSampler.
+
+### An on/off switch for each one
+A starting point that slotted itself in gets a small **switch** beside its ⇅ badge. It turns the starting point and its partner on and off together. Switched off, they're bypassed: the picture (or model, or prompts) passes straight through as if they weren't there, so you can keep an upscaler in your stack and skip it for a quick run. Switched-off units fade and their lane wires turn dashed. The setting is saved with the workflow.
+
 ### Stacks
-Snapped nodes become one stack and move together: drag any member and the whole stack follows. To take a node out, **right-click it → Take out of stack** (or use the button in its ⇅ picker). **Take the whole stack apart** is in the same menu.
+Snapped nodes become one stack and move together: drag any member and the whole stack follows. To take a node out, **right-click it → Take out of stack** (or use the button in its ⇅ picker). **Take out of stack and unplug its wires** does the same and unplugs every wire too. **Take the whole stack apart** is in the same menu.
 
 ### Line up
 The thing everyone does by hand before showing a workflow, done for you. Every time a node snaps into a stack, the stack lines up: each column gets one width, the widest node's (never narrower than a node needs), and every gap becomes the same. Nodes beside the column line their tops up with the node they sit next to.

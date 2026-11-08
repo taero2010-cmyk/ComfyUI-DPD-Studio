@@ -62,7 +62,10 @@ function fit(d, n) {
   const was = [...d.pos]; d.pos[0] = pos[0]; d.pos[1] = pos[1];
   const p = pairs(d, stackOf(n) ? members(stackOf(n)) : [n]);
   d.pos[0] = was[0]; d.pos[1] = was[1];
-  if (!p.length) return null;
+  if (!p.length) {
+    const plan = !stackOf(d) && planInsert(d, stackOf(n) ? members(stackOf(n)) : [n]);
+    return plan ? { d, n, side, pairs: [], insert: plan, pos, gap: g } : null;
+  }
   return { d, n, side, pairs: p, pos, gap: g };
 }
 // a spot is free when the node, put there, would not cover any other node
@@ -76,7 +79,7 @@ function bestFit(d, crew = []) {
   graph().nodes.forEach(n => {
     if (n === d || !live(n) || skip.has(n) || (stackOf(d) && stackOf(n) === stackOf(d))) return;
     const f = fit(d, n);
-    if (f && !free(d, f.pos, skip)) return;
+    if (f && !f.insert && !free(d, f.pos, skip)) return;   // a slot-in makes its own room
     // the node you are clearly closest to wins; between near-equals, the one that wires more
     if (f && (!best || (Math.abs(f.gap - best.gap) > 20 ? f.gap < best.gap : f.pairs.length > best.pairs.length || (f.pairs.length === best.pairs.length && f.gap < best.gap)))) best = f;
   });
@@ -88,7 +91,7 @@ function canvasPos(e) { return app.canvas.convertEventToCanvasOffset(e); }
 function onDown(e) {
   if (!ON() || e.button !== 0) return;
   const [x, y] = canvasPos(e);
-  if (badgeHit(x, y, e)) return;
+  if (switchHit(x, y, e) || badgeHit(x, y, e)) return;
   const n = graph().getNodeOnPos(x, y);
   if (!n) return;
   // dragging a node of a stack carries the whole stack; Alt is ComfyUI's copy-and-drag, which moves the copy alone
@@ -120,6 +123,7 @@ function onUp(e) {
   }, 0);
 }
 function snap(c, d) {
+  if (c.insert) { const id = stackOf(c.n) || `s${Date.now().toString(36)}`; if (!stackOf(c.n)) { c.n.properties = c.n.properties || {}; c.n.properties.dpdStack = id; } doInsert(c.insert, members(id), id); return; }
   const dx = c.pos[0] - c.d.pos[0], dy = c.pos[1] - c.d.pos[1];
   c.d.pos[0] = c.pos[0]; c.d.pos[1] = c.pos[1];
   d.crew.forEach(k => { k.m.pos[0] += dx; k.m.pos[1] += dy; });
@@ -132,9 +136,11 @@ function snap(c, d) {
   app.canvas.setDirty(true, true);
 }
 // out of the stack: it stays wired, stops moving with the stack, and steps aside so you can see it left
-function unstack(n) {
+function unstack(n, unplug) {
   const list = members(stackOf(n)).filter(m => m !== n); if (!stackOf(n)) return;
   graph().beforeChange?.();
+  if (unplug) { (n.inputs || []).forEach((_, i) => n.disconnectInput(i)); (n.outputs || []).forEach((_, j) => n.disconnectOutput(j)); }
+  if (n.properties.dpdUnit) { delete n.properties.dpdUnit; delete n.properties.dpdLead; }
   delete n.properties.dpdStack;
   if (list.length) { const right = Math.max(...list.map(m => box(m).x + box(m).w)); n.pos[0] = right + 60; }
   tidyStack(); graph().afterChange?.(); app.canvas.setDirty(true, true);
@@ -216,6 +222,7 @@ function drawLane(ctx, a, b, l, lane) {
   const seam = down ? A.y + A.h + step : A.y - step, x = lane.x, r = 5;
   ctx.save();
   ctx.strokeStyle = laneColor(l); ctx.lineWidth = 2.5; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  const dst = g.getNodeById(l.target_id); if (src.mode === 4 || (dst && dst.mode === 4)) { ctx.setLineDash([6, 5]); ctx.globalAlpha = 0.55; }
   ctx.beginPath();
   ctx.moveTo(a[0], a[1]);
   ctx.arcTo(a[0] + 12, a[1], a[0] + 12, seam, r);              // out of the output, down to the seam under its box
@@ -343,6 +350,114 @@ async function openPicker(n, cx, cy) {
   picker.style.left = `${Math.min(cx + 8, innerWidth - W - 8)}px`; picker.style.top = `${Math.min(cy + 8, innerHeight - H - 8)}px`;
   setTimeout(() => addEventListener("pointerdown", outside, true), 0);
 }
+// ---------------------------------------------------------------- slotting in: starting points that join the chain
+// A node that passes something through (a LoRA: MODEL and CLIP in, MODEL and CLIP out) slots in after the last node
+// that makes those things, and everything that used them now gets them from it. A loader with nothing to feed (Load
+// Upscale Model, Load ControlNet) brings its partner, and the partner slots in the same way: the picture now goes
+// through the upscaler, the prompts through Apply ControlNet. The loader and partner form one unit with an on/off switch.
+const throughTypes = (node, except) => { const ins = (node.inputs || []).filter(realInput).map(i => i.type); return [...new Set((node.outputs || []).map(o => o.type).filter(t => t !== except && ins.includes(t)))]; };
+// the nodes at the end of the line for a type: they make it and nothing after them passes it on
+function finalMakers(group, type, skip) {
+  const out = [];
+  reading(group).forEach(m => {
+    if (skip.includes(m)) return;
+    (m.outputs || []).forEach((o, j) => {
+      if (o.type !== type || !(o.links && o.links.length)) return;
+      const users = o.links.map(linkById).filter(Boolean).map(l => graph().getNodeById(l.target_id)).filter(Boolean);
+      const passedOn = users.some(u => (u.inputs || []).some(x => x.type === type) && (u.outputs || []).some(x => x.type === type && x.links && x.links.length));
+      if (!passedOn) out.push({ m, j });
+    });
+  });
+  return out;
+}
+function planInsert(d, group) {
+  if (group.includes(d)) return null;
+  let partner = null, through = throughTypes(d);
+  if (!through.length) {
+    for (const [j, o] of (d.outputs || []).entries()) {
+      if (o.links && o.links.length) continue;
+      for (const t of USERS[o.type] || []) {
+        const info = typeInfo(t); if (!info) continue;
+        const ins = reqTypes(info), th = [...new Set((info.output || []).filter(x => x !== o.type && ins.includes(x)))];
+        if (ins.includes(o.type) && th.length) { partner = { type: t, slot: j, through: th }; break; }
+      }
+      if (partner) break;
+    }
+    if (!partner) return null;
+    through = partner.through;
+  }
+  const makers = {}; through.forEach(t => { makers[t] = finalMakers(group, t, [d]); });
+  const all = Object.values(makers).flat();
+  if (!all.length) return null;
+  const after = reading(all.map(x => x.m)).pop();               // it goes in right after the last of them
+  return { lead: d, partner, through, makers, after };
+}
+function insertLabel(p) {
+  const what = p.partner ? `Adds ${typeTitle(p.partner.type)}` : `Slots ${p.lead.title} in`;
+  const users = [...new Set(Object.values(p.makers).flat().flatMap(x => (x.m.outputs[x.j].links || []).map(linkById).filter(Boolean).map(l => graph().getNodeById(l.target_id)).filter(Boolean)).map(u => u.title))];
+  return `${what} after ${p.after.title}${users.length ? `, ahead of ${users.slice(0, 2).join(" and ")}` : ""}`;
+}
+function doInsert(p, group, stackId) {
+  const g = graph(), d = p.lead;
+  g.beforeChange?.();
+  let node = d;
+  if (p.partner) {
+    node = LiteGraph.createNode(p.partner.type); g.add(node);
+    const i = node.inputs.findIndex(x => realInput(x) && fits(d.outputs[p.partner.slot].type, x.type));
+    if (i >= 0) d.connect(p.partner.slot, node, i);
+  }
+  // each through-input takes the next maker of its type (top to bottom); the matching output takes over that maker's users
+  const used = {};
+  (node.inputs || []).forEach((inp, i) => {
+    if (!realInput(inp) || inp.link != null || !p.through.includes(inp.type)) return;
+    const k = used[inp.type] = (used[inp.type] ?? -1) + 1, mk = p.makers[inp.type][k]; if (!mk) return;
+    const outJ = (node.outputs || []).map((o, j) => o.type === inp.type ? j : -1).filter(j => j >= 0)[k];
+    const users = (mk.m.outputs[mk.j].links || []).map(linkById).filter(Boolean).filter(l => l.target_id !== node.id && l.target_id !== d.id).map(l => ({ t: g.getNodeById(l.target_id), s: l.target_slot }));
+    mk.m.connect(mk.j, node, i);
+    if (outJ != null && outJ >= 0) users.forEach(u => u.t && node.connect(outJ, u.t, u.s));
+  });
+  pairs(node, group).forEach(q => { if (q.dst !== node || q.src !== d) q.src.connect(q.out, q.dst, q.in); });
+  // into the stack, right after the last maker; one unit with a switch
+  const unit = `u${Date.now().toString(36)}`;
+  [d, node].forEach((m, k) => { m.properties = m.properties || {}; m.properties.dpdStack = stackId; m.properties.dpdUnit = unit; m.pos = [p.after.pos[0], p.after.pos[1] + 1 + k]; });
+  d.properties.dpdLead = true;
+  g.afterChange?.();
+  lineUp(members(stackId));
+  app.canvas.setDirty(true, true);
+}
+
+// ---------------------------------------------------------------- the switch
+const BYPASS = 4, ALWAYS = 0;
+const unitOf = n => n.properties && n.properties.dpdUnit;
+const isLead = n => unitOf(n) && n.properties.dpdLead;
+const unit = id => graph().nodes.filter(m => unitOf(m) === id);
+function switchRect(n) { const [x, y, , h] = badgeRect(n); return [x - 34, y + 2, 28, h - 4]; }
+function switchHit(x, y, e) {
+  for (const n of [...graph().nodes].reverse()) {
+    if (!live(n) || !isLead(n)) continue;
+    const [sx, sy, sw, sh] = switchRect(n);
+    if (x >= sx - 2 && x <= sx + sw + 2 && y >= sy - 3 && y <= sy + sh + 3) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      const off = n.mode !== BYPASS;
+      graph().beforeChange?.(); unit(unitOf(n)).forEach(m => { m.mode = off ? BYPASS : ALWAYS; }); graph().afterChange?.();
+      app.canvas.setDirty(true, true);
+      return true;
+    }
+  }
+  return false;
+}
+function drawSwitches(ctx) {
+  if (app.canvas.ds.scale < 0.45) return;
+  graph().nodes.forEach(n => {
+    if (!live(n) || !isLead(n)) return;
+    const [x, y, w, h] = switchRect(n), on = n.mode !== BYPASS, r = h / 2;
+    ctx.save();
+    ctx.fillStyle = on ? GREEN : "#4a4656"; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(on ? x + w - r : x + r, y + r, r - 2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  });
+}
+
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const css = document.createElement("style");
 css.textContent = `
@@ -357,6 +472,17 @@ document.head.appendChild(css);
 // ---------------------------------------------------------------- drawing the magnets
 function drawMagnet(ctx) {
   const c = S.cand; if (!c) return;
+  if (c.insert) {
+    const b = box(c.insert.after), y = b.y + b.h + GAP / 2, label = insertLabel(c.insert);
+    ctx.save();
+    ctx.strokeStyle = GREEN; ctx.lineWidth = 4; ctx.shadowColor = GREEN; ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.moveTo(b.x - 6, y); ctx.lineTo(b.x + b.w + 6, y); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.font = "bold 13px system-ui"; const w = ctx.measureText(label).width + 16;
+    ctx.fillStyle = "rgba(14,24,18,.94)"; ctx.fillRect(b.x, y + 8, w, 22); ctx.lineWidth = 1.5; ctx.strokeRect(b.x, y + 8, w, 22);
+    ctx.fillStyle = "#c9f5d9"; ctx.textBaseline = "middle"; ctx.fillText(label, b.x + 8, y + 19);
+    ctx.restore();
+    return;
+  }
   const a = box(c.d), b = box(c.n), ghost = { x: c.pos[0], y: c.pos[1] - TH(), w: a.w, h: a.h };
   ctx.save();
   ctx.setLineDash([6, 4]); ctx.strokeStyle = GREEN; ctx.lineWidth = 2; ctx.fillStyle = "rgba(63,207,116,.08)";
@@ -388,7 +514,7 @@ app.registerExtension({
     if (!ON()) return [];
     const items = [], sel = selected();
     if (sel.length > 1 && sel.includes(node)) items.push({ content: `Line up the ${sel.length} selected nodes`, callback: () => lineUp(sel) });
-    if (stackOf(node)) items.push({ content: "Line up this stack", callback: () => lineUp(members(stackOf(node))) }, { content: "Take out of stack", callback: () => unstack(node) }, { content: "Take the whole stack apart", callback: () => takeApart(node) });
+    if (stackOf(node)) items.push({ content: "Line up this stack", callback: () => lineUp(members(stackOf(node))) }, { content: "Take out of stack", callback: () => unstack(node) }, { content: "Take out of stack and unplug its wires", callback: () => unstack(node, true) }, { content: "Take the whole stack apart", callback: () => takeApart(node) });
     return items;
   },
   setup() {
@@ -406,7 +532,7 @@ app.registerExtension({
       return renderLink.call(this, ctx, a, b, link, skipBorder, flow, color, ...rest);
     };
     const fg = app.canvas.onDrawForeground;
-    app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawMagnet(ctx); drawBadges(ctx); } };
-    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack, lineUp, columns };
+    app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawMagnet(ctx); drawBadges(ctx); drawSwitches(ctx); } };
+    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack, lineUp, columns, planInsert, doInsert, insertLabel };
   },
 });
