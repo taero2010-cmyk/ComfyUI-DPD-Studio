@@ -84,6 +84,11 @@ Some nodes start something rather than continue it: a LoRA, an upscale model, a 
 ### An on/off switch for each one
 A starting point that slotted itself in gets a small **switch** beside its ⇅ badge. It turns the starting point and its partner on and off together. Switched off, they're bypassed: the picture (or model, or prompts) passes straight through as if they weren't there, so you can keep an upscaler in your stack and skip it for a quick run. Switched-off units fade and their lane wires turn dashed. The setting is saved with the workflow.
 
+### Columns: a stack that wraps
+Like text wrapping onto a new line. When a stack's column reaches the height you set (**Settings → Comfy Blueprint → Conduit → Column height**, 1600 by default), dropping a node below it starts a **new column at the top**, to the right: *"Column full, new column · …"*. While you drag, a dashed **＋ next column** spot also sits at the stack's top right, so you can start a new column whenever you like. Columns line up side by side at the same top, each with its own width, and the lanes run in the gap between them. A new column steps past anything already on the canvas instead of landing on it.
+
+When a node could be fed by more than one node in the stack, it takes the one at the end of the line: a Save Image dropped at the bottom takes the upscaled picture, not the one before the upscale.
+
 ### Either/or: two ways to make the same thing
 Drop a node **beside** one that makes the same things (another sampler, another video engine) and it becomes its **alternative**: it takes the same inputs from the stack and waits, muted. Each one shows an **IN USE** / **USE** pill; click **USE** and everything that used the first now uses the second, and the first is muted, so only one ever runs. Right-click either one for **Use this one instead** or **Stop being alternatives**.
 

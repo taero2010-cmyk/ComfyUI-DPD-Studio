@@ -32,16 +32,17 @@ const fits = (outType, inType) => LiteGraph.isValidConnection(outType, inType) &
 // what joining a group would wire: every open input of d fed by a member, and every open input of a member d can feed.
 // Members are read top to bottom (then left to right) and each output feeds one input of d, so a positive prompt
 // stacked above a negative one lands on "positive" and the lower one on "negative".
-const reading = list => [...list].sort((p, q) => (p.pos[1] - q.pos[1]) || (p.pos[0] - q.pos[0]));
+const reading = list => [...list].sort((p, q) => (colOf(p) - colOf(q)) || (p.pos[1] - q.pos[1]) || (p.pos[0] - q.pos[0]));   // column by column, then top to bottom
 function pairs(d, group) {
   const out = [], used = new Set();
   const others = reading(group.filter(m => m !== d && live(m)));
   (d.inputs || []).forEach((inp, i) => {
     if (!realInput(inp) || inp.link != null) return;
-    for (const m of others) {
-      const j = (m.outputs || []).findIndex((o, k) => !used.has(`${m.id}:${k}`) && fits(o.type, inp.type));
-      if (j >= 0) { used.add(`${m.id}:${j}`); out.push({ src: m, out: j, dst: d, in: i, type: inp.type }); break; }
-    }
+    // the end of the line comes first: a Save takes the upscaled picture, not the one before it
+    const finals = new Set(finalMakers(others, inp.type, [d]).map(x => `${x.m.id}:${x.j}`));
+    const options = others.flatMap(m => (m.outputs || []).map((o, k) => ({ m, k, o }))).filter(x => !used.has(`${x.m.id}:${x.k}`) && fits(x.o.type, inp.type));
+    const pick = options.find(x => finals.has(`${x.m.id}:${x.k}`)) || options[0];
+    if (pick) { used.add(`${pick.m.id}:${pick.k}`); out.push({ src: pick.m, out: pick.k, dst: d, in: i, type: inp.type }); }
   });
   others.forEach(m => (m.inputs || []).forEach((inp, i) => {
     if (!realInput(inp) || inp.link != null || out.some(p => p.dst === m && p.in === i)) return;
@@ -84,6 +85,9 @@ function bestFit(d, crew = []) {
     // the node you are clearly closest to wins; between near-equals, the one that wires more
     if (f && (!best || (Math.abs(f.gap - best.gap) > 20 ? f.gap < best.gap : f.pairs.length > best.pairs.length || (f.pairs.length === best.pairs.length && f.gap < best.gap)))) best = f;
   });
+  // a full column, or the next-column spot, turns the drop into a new column
+  const ids = [...new Set(graph().nodes.map(stackOf).filter(Boolean))].filter(s => s !== stackOf(d));
+  ids.forEach(sid => { const w = wrapFit(d, members(sid).filter(m => !skip.has(m))); if (w && (w.wrap.full || !best || w.gap < best.gap)) best = w; });
   return best;
 }
 
@@ -133,6 +137,10 @@ function snap(c, d) {
   c.pairs.forEach(p => p.src.connect(p.out, p.dst, p.in));
   const id = stackOf(c.n) || stackOf(c.d) || `s${Date.now().toString(36)}`;
   [c.n, c.d, ...members(stackOf(c.d)), ...members(stackOf(c.n))].forEach(m => { m.properties = m.properties || {}; m.properties.dpdStack = id; });
+  // which column it joins: a new one, the one it was dropped under, or beside the chain
+  if (c.wrap) { markColumns(members(id).filter(m => m !== c.d)); c.d.properties.dpdCol = c.wrap.col; delete c.d.properties.dpdSide; }
+  else if (c.side === "right" || c.side === "left") c.d.properties.dpdSide = true;
+  else if (wrapped(members(id))) { c.d.properties.dpdCol = colOf(c.n); delete c.d.properties.dpdSide; }
   graph().afterChange?.();
   if (lineUpOn()) lineUp(members(id));
   app.canvas.setDirty(true, true);
@@ -162,6 +170,7 @@ function columns(list) {
 }
 function lineUp(list) {
   list = list.filter(live); if (list.length < 2) return;
+  if (wrapped(list)) return lineUpWrapped(list);
   const cols = columns(list), first = cols[0];
   // remember which first-column node each side node sat beside, before anything moves
   const beside = new Map();
@@ -199,26 +208,36 @@ function planLanes() {
   g.nodes.forEach(n => { const s = stackOf(n); if (s && live(n)) (byStack[s] = byStack[s] || []).push(n); });
   Object.entries(byStack).forEach(([sid, list]) => {
     if (list.length < 2) return;
-    const boxes = list.map(box), left = Math.min(...boxes.map(b => b.x)), top = Math.min(...boxes.map(b => b.y)), bottom = Math.max(...boxes.map(b => b.y + b.h));
-    const riders = [];
+    const wr = wrapped(list), ch = wr ? chains(list) : null;
+    // each chain column has its lane gutter on its left; an unwrapped stack has one, left of everything
+    const gutterOf = n => {
+      if (!wr) { const boxes = list.map(box); return { key: "0", x: Math.min(...boxes.map(b => b.x)) - 14, nodes: list }; }
+      if (isSide(n)) return null;
+      const col = ch[colOf(n)] || []; return { key: String(colOf(n)), x: Math.min(...col.map(m => m.pos[0])) - 14, nodes: col };
+    };
+    const byGutter = {};
     allLinks().forEach(l => {
       if (!l || l.origin_id == null) return;
       const a = g.getNodeById(l.origin_id), b = g.getNodeById(l.target_id);
       if (!a || !b || stackOf(a) !== sid || stackOf(b) !== sid) return;
+      const gt = gutterOf(b); if (!gt) return;
+      const across = wr && !isSide(a) && colOf(a) !== colOf(b);
       const A = box(a), B = box(b), lo = Math.min(A.y, B.y), hi = Math.max(A.y + A.h, B.y + B.h);
-      const between = list.some(m => m !== a && m !== b && box(m).y > lo && box(m).y + box(m).h < hi);
-      if (between || B.y + 2 < A.y) riders.push(l);         // and any wire that has to climb back up the stack
+      const between = gt.nodes.some(m => m !== a && m !== b && box(m).y > lo && box(m).y + box(m).h < hi);
+      if (across || between || B.y + 2 < A.y) (byGutter[gt.key] = byGutter[gt.key] || { gt, riders: [] }).riders.push(l);   // and any wire that has to climb back up
     });
-    if (!riders.length) return;
-    riders.sort((p, q) => p.id - q.id).forEach((l, i) => S.lanes.set(l.id, { x: left - 14 - i * LANE, i, stack: list }));
-    S.rails.push({ x: left - 14 - (riders.length - 1) * LANE - 6, y: top + 4, w: (riders.length - 1) * LANE + 12, h: bottom - top - 8, list, riders });
+    Object.values(byGutter).forEach(({ gt, riders }) => {
+      riders.sort((p, q) => p.id - q.id).forEach((l, i) => S.lanes.set(l.id, { x: gt.x - i * LANE, i, stack: list }));
+      const bx = gt.nodes.map(box), top = Math.min(...bx.map(b => b.y)), bottom = Math.max(...bx.map(b => b.y + b.h));
+      S.rails.push({ x: gt.x - (riders.length - 1) * LANE - 6, y: top + 4, w: (riders.length - 1) * LANE + 12, h: bottom - top - 8, list, riders });
+    });
   });
 }
 function laneColor(l) { const c = app.canvas; return l.color || (c.default_connection_color_byType && c.default_connection_color_byType[l.type]) || (LGraphCanvas.link_type_colors && LGraphCanvas.link_type_colors[l.type]) || "#9aa4b3"; }
 function drawLane(ctx, a, b, l, lane) {
   const g = graph(), src = g.getNodeById(l.origin_id), A = box(src), down = b[1] > a[1];
   // each lane crosses the seam under its box at its own height, so wires sharing a seam stay apart
-  const below = g.nodes.filter(m => m !== src && stackOf(m) === stackOf(src) && live(m) && box(m).y >= A.y + A.h - 2).map(m => box(m).y);
+  const below = g.nodes.filter(m => m !== src && stackOf(m) === stackOf(src) && live(m) && box(m).y >= A.y + A.h - 2 && box(m).x < A.x + A.w && box(m).x + box(m).w > A.x).map(m => box(m).y);
   const room = Math.max(8, Math.min(GAP, ...(below.length ? [Math.min(...below) - (A.y + A.h)] : [GAP])) - 4);
   const step = (lane.i % 4 + 1) * room / 5;
   const seam = down ? A.y + A.h + step : A.y - step, x = lane.x, r = 5;
@@ -524,6 +543,105 @@ function drawAlts(ctx) {
   });
 }
 
+// ---------------------------------------------------------------- columns: a stack that wraps
+// Like text wrapping onto a new line: when a column reaches the height set in Settings, a drop below it starts a new
+// column at the top, to the right. A green "next column" spot at the stack's top right starts one any time. Each node
+// of the chain remembers its column (dpdCol); nodes snapped beside the chain are side nodes (dpdSide).
+const COLGAP = 70;
+const maxHeight = () => Number(app.extensionManager.setting.get("Comfy.Conduit.ColumnHeight")) || 1600;
+const colOf = n => (n.properties && n.properties.dpdCol) || 0;
+const isSide = n => !!(n.properties && n.properties.dpdSide);
+const wrapped = list => list.some(n => colOf(n) > 0);
+// the first time a stack wraps, its current chain becomes column 0 and anything beside it becomes a side node
+function markColumns(list) {
+  if (wrapped(list)) return;
+  const cols = columns(list);
+  cols[0].nodes.forEach(n => { n.properties.dpdCol = 0; delete n.properties.dpdSide; });
+  cols.slice(1).forEach(c => c.nodes.forEach(n => { n.properties.dpdSide = true; }));
+}
+// the chains of a wrapped stack, column by column, each sorted top to bottom
+function chains(list) {
+  const K = Math.max(0, ...list.filter(n => !isSide(n)).map(colOf));
+  return Array.from({ length: K + 1 }, (_, k) => list.filter(n => !isSide(n) && colOf(n) === k).sort((a, b) => a.pos[1] - b.pos[1]));
+}
+function lineUpWrapped(list) {
+  const ch = chains(list).filter(c => c.length), sides = list.filter(isSide);
+  if (!ch.length) return;
+  // which chain node each side node sits beside, decided before anything moves
+  const beside = new Map(sides.map(s => {
+    let best = null, most = -Infinity;
+    ch.flat().forEach(f => { if (f.pos[0] > s.pos[0]) return; const o = Math.min(f.pos[1] + f.size[1], s.pos[1] + s.size[1]) - Math.max(f.pos[1], s.pos[1]) - Math.abs(s.pos[0] - (f.pos[0] + f.size[0])) * 0.01; if (o > most) { most = o; best = f; } });
+    return [s, best];
+  }));
+  const top = Math.min(...ch.map(c => c[0].pos[1])), left = Math.min(...ch.map(c => c[0].pos[0]));
+  const need = n => Math.max(n.size[0], n.computeSize ? n.computeSize()[0] : 0);
+  graph().beforeChange?.();
+  let x = left;
+  ch.forEach((col, k) => {
+    if (k) x = Math.max(x, Math.min(...col.map(n => n.pos[0])));   // a column that stepped aside for something keeps its place
+    const w = Math.max(...col.map(need));
+    let y = top;
+    col.forEach(n => { n.setSize ? n.setSize([w, n.size[1]]) : (n.size[0] = w); n.pos[0] = x; n.pos[1] = y; y += n.size[1] + TH() + GAP; });
+    const mine = sides.filter(s => col.includes(beside.get(s)));
+    let block = w;
+    if (mine.length) {
+      const sw = Math.max(...mine.map(need)); let floor = -Infinity;
+      mine.sort((a, b) => beside.get(a).pos[1] - beside.get(b).pos[1]).forEach(s => {
+        s.setSize ? s.setSize([sw, s.size[1]]) : (s.size[0] = sw);
+        s.pos[0] = x + w + GAP; s.pos[1] = Math.max(beside.get(s).pos[1], floor); floor = s.pos[1] + s.size[1] + TH() + GAP;
+      });
+      block = w + GAP + sw;
+    }
+    x += block + COLGAP;
+  });
+  graph().afterChange?.(); app.canvas.setDirty(true, true);
+}
+// where the next column would start, for a stack: right of it, and right of anything else in the way
+function nextColumn(list, w = 400, h = 600) {
+  const boxes = list.filter(live).map(box), ch = wrapped(list) ? chains(list).filter(c => c.length) : [columns(list)[0].nodes];
+  const y = ch[0][0].pos[1], others = graph().nodes.filter(n => live(n) && !list.includes(n) && !(S.drag && (n === S.drag.n || S.drag.crew.some(c => c.m === n))));
+  let x = Math.max(...boxes.map(b => b.x + b.w)) + COLGAP;
+  for (let tries = 0; tries < 50; tries++) {
+    const hit = others.map(box).filter(b => x < b.x + b.w && b.x < x + w && y - TH() < b.y + b.h && b.y < y - TH() + h);
+    if (!hit.length) break;
+    x = Math.max(...hit.map(b => b.x + b.w)) + COLGAP;
+  }
+  return { x, y, col: (wrapped(list) ? Math.max(...list.filter(n => !isSide(n)).map(colOf)) : 0) + 1 };
+}
+// is d being dropped where a new column should start? (below a full column, or onto the next-column spot)
+function wrapFit(d, list) {
+  if (list.length < 2) return null;
+  const nc = nextColumn(list, d.size[0], d.size[1] + TH()), spot = { x: nc.x, y: nc.y - TH(), w: d.size[0], h: d.size[1] + TH() };
+  const a = box(d), near = gapBetween(a, spot) <= NEAR;
+  let full = false, anchor = null;
+  if (!near) {
+    const ch = wrapped(list) ? chains(list).filter(c => c.length) : [columns(list)[0].nodes];
+    const last = ch[ch.length - 1], low = last[last.length - 1], b = box(low), top = box(last[0]).y;
+    const below = a.y >= b.y + b.h - 20 && Math.abs((a.x + a.w / 2) - (b.x + b.w / 2)) < b.w && gapBetween(a, b) <= NEAR;
+    if (!below || (b.y + b.h + GAP + a.h - top) <= maxHeight()) return null;
+    full = true; anchor = low;
+  }
+  const was = [...d.pos]; d.pos[0] = nc.x; d.pos[1] = nc.y;
+  const p = pairs(d, list);
+  d.pos[0] = was[0]; d.pos[1] = was[1];
+  if (!p.length) return null;
+  return { d, n: anchor || list[0], side: "below", pairs: p, pos: [nc.x, nc.y], gap: full ? 0 : gapBetween(a, spot), wrap: { col: nc.col, full } };
+}
+function drawNextSpots(ctx) {
+  const d = S.drag; if (!d || !d.moved || d.alt) return;
+  const byStack = {};
+  graph().nodes.forEach(n => { const s = stackOf(n); if (s && live(n) && n !== d.n && !d.crew.some(c => c.m === n)) (byStack[s] = byStack[s] || []).push(n); });
+  Object.values(byStack).forEach(list => {
+    if (list.length < 2) return;
+    const nc = nextColumn(list, d.n.size[0], d.n.size[1] + TH()), w = d.n.size[0], h = Math.min(d.n.size[1] + TH(), 160);
+    ctx.save();
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = "rgba(63,207,116,.55)"; ctx.lineWidth = 1.5; ctx.fillStyle = "rgba(63,207,116,.05)";
+    ctx.beginPath(); ctx.rect(nc.x, nc.y - TH(), w, h); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(201,245,217,.75)"; ctx.font = "bold 12px system-ui"; ctx.textBaseline = "top"; ctx.fillText("＋ next column", nc.x + 8, nc.y - TH() + 8);
+    ctx.restore();
+  });
+}
+
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const css = document.createElement("style");
 css.textContent = `
@@ -563,7 +681,7 @@ function drawMagnet(ctx) {
     ctx.restore(); return;
   }
   const name = s => s.label || s.name || s.type;
-  const label = c.pairs.map(p => `${name(p.src.outputs[p.out])} → ${name(p.dst.inputs[p.in])}${p.src !== c.n && p.dst !== c.n ? " (lane)" : ""}`).join("   ");
+  const label = (c.wrap ? (c.wrap.full ? "Column full, new column · " : "New column · ") : "") + c.pairs.map(p => `${name(p.src.outputs[p.out])} → ${name(p.dst.inputs[p.in])}${p.src !== c.n && p.dst !== c.n ? " (lane)" : ""}`).join("   ");
   // and a preview of each wire it will make
   ctx.setLineDash([4, 4]); ctx.lineWidth = 2;
   c.pairs.forEach(p => {
@@ -581,7 +699,7 @@ function drawMagnet(ctx) {
 
 app.registerExtension({
   name: "Comfy.Conduit",
-  settings: [{ id: "Comfy.Conduit.LineUp", category: ["Comfy Blueprint", "Conduit", "Line up"], name: "Line up a stack after every snap (same width, even spacing)", type: "boolean", defaultValue: true }, { id: "Comfy.Conduit.Enabled", category: ["Comfy Blueprint", "Conduit", "Magnets"], name: "Comfy Conduit: magnets, stacks and passthrough lanes", type: "boolean", defaultValue: true, tooltip: "Drag a node near another to snap and wire it; stacked nodes move together and long wires ride the lanes. Right-click a node to take it out of its stack." }],
+  settings: [{ id: "Comfy.Conduit.ColumnHeight", category: ["Comfy Blueprint", "Conduit", "Column height"], name: "Column height before a stack wraps into a new column", type: "number", defaultValue: 1600, attrs: { min: 400, max: 20000, step: 100 }, tooltip: "When a stack's column gets this tall, dropping a node below it starts a new column at the top, to the right." }, { id: "Comfy.Conduit.LineUp", category: ["Comfy Blueprint", "Conduit", "Line up"], name: "Line up a stack after every snap (same width, even spacing)", type: "boolean", defaultValue: true }, { id: "Comfy.Conduit.Enabled", category: ["Comfy Blueprint", "Conduit", "Magnets"], name: "Comfy Conduit: magnets, stacks and passthrough lanes", type: "boolean", defaultValue: true, tooltip: "Drag a node near another to snap and wire it; stacked nodes move together and long wires ride the lanes. Right-click a node to take it out of its stack." }],
   getNodeMenuItems(node) {
     if (!ON()) return [];
     const items = [], sel = selected();
@@ -605,7 +723,7 @@ app.registerExtension({
       return renderLink.call(this, ctx, a, b, link, skipBorder, flow, color, ...rest);
     };
     const fg = app.canvas.onDrawForeground;
-    app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawMagnet(ctx); drawBadges(ctx); drawSwitches(ctx); drawAlts(ctx); } };
-    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack, lineUp, columns, planInsert, doInsert, insertLabel, planAlt, doAlt, choose };
+    app.canvas.onDrawForeground = function (ctx, area) { fg && fg.call(this, ctx, area); if (ON()) { drawNextSpots(ctx); drawMagnet(ctx); drawBadges(ctx); drawSwitches(ctx); drawAlts(ctx); } };
+    window.__comfyStacks = window.__comfyConduit = { S, fit, bestFit, pairs, snap, planLanes, openPicker, members, unstack, lineUp, columns, planInsert, doInsert, insertLabel, planAlt, doAlt, choose, wrapFit, lineUpWrapped, markColumns, chains };
   },
 });
