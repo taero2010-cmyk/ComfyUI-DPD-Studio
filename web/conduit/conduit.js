@@ -11,7 +11,7 @@
 import { app } from "../../../scripts/app.js";
 
 const GAP = 22, NEAR = 70, LANE = 8, GREEN = "#3fcf74";
-const ON = () => app.extensionManager.setting.get("Comfy.Conduit.Enabled") !== false;
+const ON = () => !!(window.DPDStudio && window.DPDStudio.conduit);   // on while the workflow has a Comfy Blueprint node with its Conduit switch on (blueprint.js)
 const S = { drag: null, cand: null, lanes: new Map(), rails: [] };
 const TH = () => LiteGraph.NODE_TITLE_HEIGHT || 30;
 const graph = () => app.canvas.graph || app.graph;
@@ -699,7 +699,7 @@ function drawMagnet(ctx) {
 
 app.registerExtension({
   name: "Comfy.Conduit",
-  settings: [{ id: "Comfy.Conduit.ColumnHeight", category: ["Comfy Blueprint", "Conduit", "Column height"], name: "Column height before a stack wraps into a new column", type: "number", defaultValue: 1600, attrs: { min: 400, max: 20000, step: 100 }, tooltip: "When a stack's column gets this tall, dropping a node below it starts a new column at the top, to the right." }, { id: "Comfy.Conduit.LineUp", category: ["Comfy Blueprint", "Conduit", "Line up"], name: "Line up a stack after every snap (same width, even spacing)", type: "boolean", defaultValue: true }, { id: "Comfy.Conduit.Enabled", category: ["Comfy Blueprint", "Conduit", "Magnets"], name: "Comfy Conduit: magnets, stacks and passthrough lanes", type: "boolean", defaultValue: true, tooltip: "Drag a node near another to snap and wire it; stacked nodes move together and long wires ride the lanes. Right-click a node to take it out of its stack." }],
+  settings: [{ id: "Comfy.Conduit.ColumnHeight", category: ["DPD Studio", "Conduit", "Column height"], name: "Column height before a stack wraps into a new column", type: "number", defaultValue: 1600, attrs: { min: 400, max: 20000, step: 100 }, tooltip: "When a stack's column gets this tall, dropping a node below it starts a new column at the top, to the right." }, { id: "Comfy.Conduit.LineUp", category: ["DPD Studio", "Conduit", "Line up"], name: "Line up a stack after every snap (same width, even spacing)", type: "boolean", defaultValue: true }],
   getNodeMenuItems(node) {
     if (!ON()) return [];
     const items = [], sel = selected();

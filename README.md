@@ -20,6 +20,17 @@ git clone https://github.com/taero2010-cmyk/ComfyUI-DPD-Studio
 
 There are no extra Python requirements yet. If a section ever needs some, they'll be listed under that section.
 
+## Turning it on and off
+
+**Nothing from DPD Studio runs until you ask for it.** After installing, your workflows look and behave exactly as before. A workflow gets DPD Studio's tools when it has a **Comfy Blueprint node**:
+
+- Add one from the top menu, **DPD Studio → Add the Comfy Blueprint node**, or from **Add Node → utils → Comfy Blueprint**.
+- With the node in the workflow, Conduit and the Blueprint tab come on. Each has its own switch on the node, under **On here**, and the switches are saved with that workflow.
+- Take the node out and DPD Studio is off in that workflow again.
+- **DPD Studio → All DPD Studio tools** in the top menu (also in Settings → DPD Studio) turns everything off in every workflow at once.
+
+Turning a tool off never changes your workflow: Conduit's wires are ordinary ComfyUI links, and the Blueprint node only displays. The first time ComfyUI opens with DPD Studio installed, a short note explains all this.
+
 ---
 
 ## Comfy Blueprint
@@ -46,7 +57,7 @@ Click any node in the list to jump to it on the canvas.
 - long jobs that report two counts, such as chunks of a long video and the sampler's steps inside each chunk, show both: `chunk 3/40 · 12/30`
 
 ### The Comfy Blueprint node
-Add it from **utils → Comfy Blueprint**: a small came from / now / next box for your canvas. Click a step to jump to that node; click anywhere else to open the full Blueprint. It only displays: it's never sent to the server and never changes a render.
+Add it from **utils → Comfy Blueprint** or the top menu (**DPD Studio → Add the Comfy Blueprint node**). It turns DPD Studio on in that workflow, with a switch for Conduit and one for the Blueprint tab, and it's a small came from / now / next box for your canvas. Click a step to jump to that node; click anywhere else to open the full Blueprint. It only displays: it's never sent to the server and never changes a render.
 
 ### Add notes for more nodes
 `web/blueprint/notes.json` holds the plain-words notes, keyed by node class name:

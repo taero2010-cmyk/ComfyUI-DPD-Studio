@@ -116,6 +116,14 @@ css.textContent = `
 .cbp-tab .tools{display:flex;gap:6px;margin:8px 0}
 .cbp-tab .tools button{border:1px solid #3a3644;background:rgba(255,255,255,.04);color:inherit;border-radius:3px;padding:4px 10px;cursor:pointer;font:600 12px system-ui}
 .cbp-tab .tools button:hover{border-color:#e8b64c}
+.cbp-tab .swnote{margin:-6px 0 8px;color:#8d879a;font-size:11px}
+.cbp-sw{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:6px;padding-top:6px;border-top:1px solid #34333f;font:600 11.5px system-ui;color:#cfcad8}
+.cbp-sw b{font:700 9.5px system-ui;letter-spacing:.08em;text-transform:uppercase;color:#8d879a}
+.cbp-sw label{display:flex;align-items:center;gap:5px;cursor:pointer}
+.cbp-sw i{position:relative;width:24px;height:13px;border-radius:7px;background:#4a4458;transition:background .15s}
+.cbp-sw i::after{content:"";position:absolute;left:2px;top:2px;width:9px;height:9px;border-radius:50%;background:#cfcad8;transition:left .15s}
+.cbp-sw label.on i{background:#3fcf74}.cbp-sw label.on i::after{left:13px;background:#fff}
+.cbp-sw.off-all::after{content:"All off in the DPD Studio menu";color:#e8b64c;font-weight:400;font-size:10.5px}
 .cbp-tab ol{list-style:none;margin:0;padding:4px 0 20px}
 .cbp-tab li{position:relative;margin-left:8px;padding:8px 8px 10px 16px;border-left:2px solid #3a3644;cursor:pointer}
 .cbp-tab li:hover{background:rgba(255,255,255,.03)}
@@ -169,7 +177,64 @@ function jump(id) {
   const n = id && canvasNode(id); if (!n) return;
   app.canvas.selectNode(n, false); app.canvas.centerOnNode(n); app.canvas.setDirty(true, true);
 }
-function openTab() { const st = app.extensionManager.sidebarTab; if (st.activeSidebarTabId !== TAB) st.toggleSidebarTab(TAB); }
+function openTab() {
+  if (!shown) return app.extensionManager.toast?.add({ severity: "info", summary: "The Blueprint tab is off", detail: "Turn it on with the Blueprint tab switch on the Comfy Blueprint node.", life: 5000 });
+  const st = app.extensionManager.sidebarTab; if (st.activeSidebarTabId !== TAB) st.toggleSidebarTab(TAB);
+}
+
+// ---------------------------------------------------------------- on and off
+// DPD Studio stays out of the way until a workflow has a Comfy Blueprint node: then the Blueprint tab and Conduit come
+// on, and the node's own switches turn each one off for that workflow (they're saved with it). DPD Studio's top menu
+// (dpd_menu.js) has the "all off" switch and adds the node. window.DPDStudio tells the other parts what's on.
+const NODE = "Comfy Blueprint";
+const SWITCHES = [["dpdConduit", "Conduit"], ["dpdTab", "Blueprint tab"]];
+const ST = window.DPDStudio = { node: false, conduit: false, tab: false };
+const allOn = () => app.extensionManager.setting.get("DPD.Studio.Enabled") !== false;
+const theNode = () => (app.graph?.nodes || []).find(n => n.type === NODE);
+let ready = false, shown = false;
+function syncAll() {
+  if (!ready) return;                                        // the graph isn't there until setup
+  const n = theNode(), p = (n && n.properties) || {}, all = allOn();
+  const next = { node: !!n, conduit: all && !!n && p.dpdConduit !== false, tab: all && !!n && p.dpdTab !== false };
+  const changed = Object.keys(next).some(k => next[k] !== ST[k]);
+  Object.assign(ST, next);
+  syncTab(); paintSwitches();
+  if (changed) app.canvas?.setDirty(true, true);
+}
+function syncTab() {
+  if (!ready || ST.tab === shown) return;
+  shown = ST.tab;
+  const em = app.extensionManager;
+  if (shown) em.registerSidebarTab(TAB_DEF);
+  else { if (em.sidebarTab.activeSidebarTabId === TAB) em.sidebarTab.toggleSidebarTab(TAB); em.unregisterSidebarTab?.(TAB); }
+}
+function paintSwitches() {
+  document.querySelectorAll(".cbp-sw").forEach(sw => {
+    const n = sw._node; if (!n) return;
+    sw.classList.toggle("off-all", !allOn());
+    sw.querySelectorAll("label").forEach(l => l.classList.toggle("on", allOn() && n.properties?.[l.dataset.p] !== false));
+  });
+}
+function flip(node, key) {
+  node.properties = node.properties || {};
+  if (!allOn()) { app.extensionManager.setting.set("DPD.Studio.Enabled", true); node.properties[key] = true; }   // all were off: this one comes on
+  else node.properties[key] = node.properties[key] === false;
+  app.graph?.change?.();
+  syncAll();
+}
+addEventListener("dpd-studio-switch", syncAll);
+setInterval(syncAll, 700);                                   // a Blueprint node added, removed, or another workflow opened
+const TAB_DEF = {
+  id: TAB, icon: "pi pi-sitemap", title: "Blueprint", tooltip: "Comfy Blueprint: what each node does, and why it's wired there", type: "custom",
+  render: el => {
+    el.innerHTML = `<div class="cbp cbp-tab idle"><div class="head"><h2>Comfy <span>Blueprint</span></h2><p class="sub"></p><p class="swnote">Switch Conduit or this tab off on the Comfy Blueprint node.</p><div class="cbp-flow"></div><div class="tools"><button data-a="refresh">Read the workflow again</button></div></div><ol></ol></div>`;
+    const box = el.firstChild;
+    box.addEventListener("click", e => { const b = e.target.closest("[data-a=refresh]"); if (b) { readWorkflow().then(draw); return; } const t = e.target.closest("[data-go]"); if (t) jump(t.dataset.go); });
+    box.addEventListener("wheel", () => { box.dataset.moved = 1; }, { passive: true });
+    views.add({ el: box, paint: paintTab });
+    (S.busy ? Promise.resolve() : readWorkflow()).then(draw);
+  },
+};
 
 async function loadNotes() { try { NOTES = await (await fetch(new URL("./notes.json", import.meta.url))).json(); } catch { NOTES = {}; } }
 
@@ -177,17 +242,7 @@ app.registerExtension({
   name: "Comfy.Blueprint",
   async setup() {
     await loadNotes();
-    app.extensionManager.registerSidebarTab({
-      id: TAB, icon: "pi pi-sitemap", title: "Blueprint", tooltip: "Comfy Blueprint: what each node does, and why it's wired there", type: "custom",
-      render: el => {
-        el.innerHTML = `<div class="cbp cbp-tab idle"><div class="head"><h2>Comfy <span>Blueprint</span></h2><p class="sub"></p><div class="cbp-flow"></div><div class="tools"><button data-a="refresh">Read the workflow again</button></div></div><ol></ol></div>`;
-        const box = el.firstChild;
-        box.addEventListener("click", e => { const b = e.target.closest("[data-a=refresh]"); if (b) { readWorkflow().then(draw); return; } const t = e.target.closest("[data-go]"); if (t) jump(t.dataset.go); });
-        box.addEventListener("wheel", () => { box.dataset.moved = 1; }, { passive: true });
-        views.add({ el: box, paint: paintTab });
-        (S.busy ? Promise.resolve() : readWorkflow()).then(draw);
-      },
-    });
+    ready = true; syncAll();
     // keep the blueprint in step with the canvas while nothing runs
     let t = 0;
     const later = () => { if (S.busy) return; clearTimeout(t); t = setTimeout(() => readWorkflow().then(draw), 400); };
@@ -208,18 +263,19 @@ app.registerExtension({
         this.color = "#1f3a29"; this.bgcolor = "#17151d";
         const el = document.createElement("div");
         el.className = "cbp idle";
-        el.innerHTML = `<div class="cbp-flow"></div>`;
-        el.addEventListener("click", e => { const s = e.target.closest("[data-go]"); if (s && s.dataset.go) jump(s.dataset.go); else openTab(); });
+        el.innerHTML = `<div class="cbp-flow"></div><div class="cbp-sw" title="DPD Studio's tools in this workflow"><b>On here</b>${SWITCHES.map(([k, l]) => `<label data-p="${k}"><i></i>${l}</label>`).join("")}</div>`;
+        el.querySelector(".cbp-sw")._node = this;
+        el.addEventListener("click", e => { const sw = e.target.closest(".cbp-sw label"); if (sw) return flip(this, sw.dataset.p); if (e.target.closest(".cbp-sw")) return; const s = e.target.closest("[data-go]"); if (s && s.dataset.go) jump(s.dataset.go); else openTab(); });
         el.title = "Click a step to jump to it; click anywhere else for the full Blueprint";
-        this.addDOMWidget("blueprint", "blueprint", el, { serialize: false, hideOnZoom: false, getMinHeight: () => 112 });
+        this.addDOMWidget("blueprint", "blueprint", el, { serialize: false, hideOnZoom: false, getMinHeight: () => 140 });
         views.add({ el, paint: paintNode });
-        this.size = [340, 150];
+        this.size = [340, 178];
         paintNode(el);
       }
     }
     ComfyBlueprintNode.title = "Comfy Blueprint";
     ComfyBlueprintNode.category = "utils";
-    ComfyBlueprintNode.description = "Shows where a render is (the node it came from, the one working now, the next) and opens the Blueprint: what every node does and why.";
+    ComfyBlueprintNode.description = "Turns DPD Studio's tools on in this workflow (Conduit and the Blueprint tab, each with its own switch). Shows where a render is (the node it came from, the one working now, the next) and opens the Blueprint: what every node does and why.";
     LiteGraph.registerNodeType("Comfy Blueprint", ComfyBlueprintNode);
   },
 });
