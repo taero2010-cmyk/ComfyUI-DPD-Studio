@@ -182,8 +182,10 @@ function kindOf(n) {
   if (t === "VAEDecode") return "decode";
   if (t === "VAEEncode") return "encode";
   if (o.includes("LATENT") && i.includes("MODEL")) return "sampler";
+  if (o.includes("LATENT") && (i.includes("GUIDER") || i.includes("SIGMAS"))) return "sampler";   // SamplerCustomAdvanced: the guider and schedule are filled in by type
   if (o.includes("LATENT") && !i.some(x => STREAM.includes(x))) return "size";
   if (o.includes("CONDITIONING") && i.includes("CLIP") && i.length === 1) return "prompt";
+  if (i.includes("CLIP") && ["positive", "negative"].every(nm => n.outputs?.some(x => x.name === nm))) return "prompt";   // one node gives both (Qwen's encoders)
   if (o.includes("MODEL") && i.includes("MODEL") && /lora/i.test(t)) return "lora";
   if (!i.some(x => STREAM.includes(x)) && (o.includes("MODEL") || o.includes("CLIP"))) return "model";
   if (o.length === 1 && o[0] === "VAE" && !i.length) return "vae";
@@ -389,9 +391,10 @@ class DropSheet extends LGraphNode {
   of(kind) { return this.in(ZONE_OF[kind] || "x").map(byId).filter(n => kindOf(n) === kind); }
   // ---- a node dropped on the sheet: into its zone (or a tile of its own), tucked under the paper, wired
   absorb(n) {
-    const k = kindOf(n); if (!k) return false;
-    this.norm(); const P = this.properties, id = String(n.id);
-    if (k === "decode" || k === "encode") P.helpers[k] = id;
+    const P = this.properties, k = kindOf(n) || (P.hand && !isSheet(n) ? "step" : null); if (!k) return false;
+    this.norm(); const id = String(n.id);
+    if (P.hand && !["textclip", "blueprint", "syscheck"].includes(k)) { const z = ZONE_OF[k]; if (z && z !== "x") { if (!this.in(z).includes(id)) P.zones[z] = [...this.in(z), id]; } else if (!P.steps.includes(id)) P.steps.push(id); }   // nothing replaced, nothing moved: every node keeps its place in the workflow
+    else if (k === "decode" || k === "encode") P.helpers[k] = id;
     else if (k === "makevideo") P.helpers.video = id;
     else if (k === "syscheck") { const old = byId(P.helpers.syscheck); if (old && String(old.id) !== id) this.release(old.id, true); P.helpers.syscheck = id; }
     else if (k === "blueprint") { const old = byId(P.helpers.blueprint); if (old && String(old.id) !== id) this.release(old.id, true); P.helpers.blueprint = id; }
@@ -404,8 +407,9 @@ class DropSheet extends LGraphNode {
     else if (k === "size") { const z = ZONE_OF[k]; this.in(z).filter(x => kindOf(byId(x)) === k && x !== id).forEach(x => this.release(x, true)); P.zones[z] = [...this.in(z).filter(x => x !== id), id]; }
     else if (k === "vae") { this.of("vae").filter(x => String(x.id) !== id).forEach(x => this.release(x.id, true)); P.zones.loaders = [...this.in("loaders"), id]; }
     else { const z = ZONE_OF[k]; if (!this.in(z).includes(id)) P.zones[z] = [...this.in(z), id]; }
-    if (k === "prompt" && this.of("prompt").length > 2) this.release(this.of("prompt")[0].id, true);
+    if (k === "prompt" && !P.hand && this.of("prompt").length > 2) this.release(this.of("prompt")[0].id, true);
     n.properties = n.properties || {}; n.properties[KEY] = this.id; n.flags = n.flags || {}; n.flags.collapsed = true;
+    if (this._bulk) return true;   // a whole workflow coming in: laid out once at the end
     this.norm(); this.wire(); this.render(); changed();
     app.canvas.bringToFront?.(this);
     return true;
@@ -449,7 +453,7 @@ class DropSheet extends LGraphNode {
       for (const st of stages) {
         const ns = [...new Set(st.filter(v => v != null).map(String))].map(byId).filter(Boolean); if (!ns.length) continue;
         let y = this.pos[1], w = 0;
-        for (const n of ns) { n.flags.collapsed = String(n.id) === String(H.textclip); n.pos = [x, y]; y += (n.flags.collapsed ? 0 : n.size[1]) + LiteGraph.NODE_TITLE_HEIGHT + 34; w = Math.max(w, n.flags.collapsed ? 180 : n.size[0]); }   // the Text Clip's box stays in the sheet
+        for (const n of ns) { n.flags.collapsed = String(n.id) === String(H.textclip) || !!faceOf(n); n.pos = [x, y]; y += (n.flags.collapsed ? 0 : n.size[1]) + LiteGraph.NODE_TITLE_HEIGHT + 34; w = Math.max(w, n.flags.collapsed ? 180 : n.size[0]); }   // the Text Clip's box stays in the sheet
         x += w + 80;
       }
       return;
@@ -515,6 +519,7 @@ class DropSheet extends LGraphNode {
     if (!KIN_WIRING && this.links().length) { KIN_WIRING = true; try { this.kin().forEach(x => { x.wire(); x.render(); }); } finally { KIN_WIRING = false; } }   // its kin may be borrowing from it
   }
   wire0() {
+    if (this.properties.hand) return this.tuck();   // its own wiring, kept exactly
     const up = this.upstream(), upPic = up && up !== this ? up.finalImage() : null;   // another sheet's finished picture
     if (upPic && this.properties.helpers.load) { const h = byId(this.properties.helpers.load); delete this.properties.helpers.load; if (h) graph().remove(h); }   // its own start picture isn't needed now
     const out = (n, T) => n ? n.outputs?.findIndex(o => o.type === T) ?? -1 : -1, inT = (n, T) => n?.inputs?.findIndex(i => i.type === T && !i.widget) ?? -1;
@@ -541,12 +546,19 @@ class DropSheet extends LGraphNode {
       if (n.inputs?.some(i => i.name === "clip")) { link(C, "CLIP", n, "clip"); if (out(n, "CLIP") >= 0) C = n; }
     }
     if (models0[0]) M = tips.get(models0[0]);
-    const samplers = this.of("sampler"), samp = samplers[0], ownP = this.of("prompt"), prompts = ownP.length || !samp ? ownP : this.borrow(x => x.of("prompt")) || [], pos = prompts[0];
+    const samplers = this.of("sampler"), samp = samplers[0], ownP = this.of("prompt"), negish = p => { const t = String(wOf(p, "text")?.value || ""); return (/negat/i.test(p.title) ? 4 : 0) + (/blurr|low.?quality|worst|bad (hands|anatomy)|deformed|watermark|jpeg artifacts/i.test(t) ? 2 : 0) + (!t.trim() ? 1 : 0) - (p.inputs?.find(x => x.name === "text")?.link != null ? 5 : 0); },
+      neg1st = p => p.length > 1 && negish(p[0]) > negish(p[1]) ? [p[1], p[0], ...p.slice(2)] : p;   // the negative is the one called that, or the empty one, or the one listing what to avoid
+    const prompts = neg1st(ownP.length || !samp ? ownP : this.borrow(x => x.of("prompt")) || []), pos = prompts[0];
     const size = this.of("size")[0] || (samp ? this.borrow(x => x.of("size")[0]) : null);   // a prompt and a picture size can live on a linked sheet
     const models = loaders.filter(m => kindOf(m) === "model" && out(m, "MODEL") >= 0);
     const ix = (n, name, io) => (io === "o" ? n?.outputs : n?.inputs)?.findIndex(x => x.name === name) ?? -1;
     const plug = (from, oi, to, ii) => { if (!from || !to || oi < 0 || ii < 0) return; const cur = to.inputs[ii].link; if (cur != null && String(origin(cur)) === String(from.id)) return; from.connect(oi, to, ii); };
     let neg = prompts[1];
+    const dual = !!pos && ix(pos, "positive", "o") >= 0 && ix(pos, "negative", "o") >= 0;   // it gives both prompts itself
+    if (dual) { neg = pos; if (this.properties.helpers.negative) { const h = byId(this.properties.helpers.negative); delete this.properties.helpers.negative; if (h) graph().remove(h); } }
+    // a "zero out" step is the negative (Z-Image, Flux): it takes the positive prompt and gives the sampler nothing to avoid
+    const zeroes = this.steps().map(byId).filter(e => e && /zero.?out/i.test(e.type) && inT(e, "CONDITIONING") >= 0 && out(e, "CONDITIONING") >= 0);
+    if (!neg && zeroes[0]) { neg = zeroes[0]; link(pos, "CONDITIONING", neg); if (this.properties.helpers.negative) { const h = byId(this.properties.helpers.negative); delete this.properties.helpers.negative; if (h) graph().remove(h); } }
     if (!neg && samp && C) neg = this.helper("negative", "CLIPTextEncode", n => setW(n, "text", ""));
     else if (prompts[1] && this.properties.helpers.negative) { const h = byId(this.properties.helpers.negative); delete this.properties.helpers.negative; if (h) graph().remove(h); }
     link(C, "CLIP", pos, "clip"); link(C, "CLIP", neg, "clip");
@@ -558,10 +570,13 @@ class DropSheet extends LGraphNode {
     }
     // steps, in the order their tiles sit on the page
     const order = this.properties.order.filter(z => z.startsWith("step:")).map(z => byId(z.slice(5))).filter(Boolean);
-    const through = T => order.filter(e => !isPair(e) && inT(e, T) >= 0 && out(e, T) >= 0);
+    const PREP = /ToTotalPixels|ToMaxDimension|KontextImageScale|ResizeImage|ImageResize|Canny|Depth|Pose|Lineart|LineArt|Preprocessor|Sketch|Normal|Segment|ImageCrop/i;
+    const pic0 = upPic || this.of("picture")[0], prep = pic0 ? order.filter(e => PREP.test(e.type) && inT(e, "IMAGE") >= 0 && out(e, "IMAGE") >= 0) : [];
+    let prepped = pic0; for (const e of prep) { link(prepped, "IMAGE", e); prepped = e; }   // the start picture, made ready
+    const through = T => order.filter(e => !isPair(e) && !zeroes.includes(e) && !prep.includes(e) && inT(e, T) >= 0 && out(e, T) >= 0);
     const chain = (start, T) => { let at = start; for (const e of through(T)) { if (at) link(at, T, e); at = e; } return at; };
     // the prompts: one-prompt steps on the positive, then steps that take both (and maybe make the frames)
-    let Pn = pos && [pos, out(pos, "CONDITIONING")], Nn = neg && [neg, out(neg, "CONDITIONING")];
+    let Pn = pos && [pos, dual ? ix(pos, "positive", "o") : out(pos, "CONDITIONING")], Nn = neg && [neg, dual ? ix(pos, "negative", "o") : out(neg, "CONDITIONING")];
     for (const e of through("CONDITIONING")) { if (Pn) plug(Pn[0], Pn[1], e, inT(e, "CONDITIONING")); Pn = [e, out(e, "CONDITIONING")]; }
     let framesLatent = null;
     for (const e of [...this.of("frames"), ...order.filter(isPair)]) {
@@ -571,7 +586,7 @@ class DropSheet extends LGraphNode {
     }
     let start = framesLatent || size;
     if (this.properties.mode === "i2i" && this.properties.kind !== "video") {
-      const pic = upPic || this.of("picture")[0] || this.helper("load", "LoadImage"), enc = this.helper("encode", "VAEEncode");
+      const pic = (prep.length && prepped) || upPic || this.of("picture")[0] || this.helper("load", "LoadImage"), enc = this.helper("encode", "VAEEncode");
       link(pic, "IMAGE", enc, "pixels"); link(V, "VAE", enc, "vae"); start = enc;
     }
     M = chain(M, "MODEL");
@@ -607,17 +622,39 @@ class DropSheet extends LGraphNode {
     for (const e of pics) link(e, "IMAGE", this.helper(`pv:${e.id}`, "PreviewImage"), "images");
     for (const k of Object.keys(H)) if (k.startsWith("pv:") && !pics.some(e => `pv:${e.id}` === k)) { const h = byId(H[k]); delete H[k]; if (h) graph().remove(h); }
     // anything a step still wants (an upscale model, a ControlNet, a picture), from whatever here gives it
-    const givers = [...loaders, ...(upPic ? [upPic] : []), ...this.of("picture")];
-    for (const e of [...order, ...this.of("frames")]) (e.inputs || []).forEach((inp, i) => {   // steps and the frames maker
+    const givers = [...loaders, ...(prep.length ? [prepped] : []), ...(upPic ? [upPic] : []), ...this.of("picture")];
+    for (const e of [...order, ...this.of("frames"), ...(dual ? [pos] : [])]) (e.inputs || []).forEach((inp, i) => {   // steps, the frames maker, and an encoder that takes pictures
       if (inp.link != null || inp.widget) return;
       const g = givers.find(x => out(x, inp.type) >= 0); if (g) g.connect(out(g, inp.type), e, i);
     });
+    // anything still empty that a part here can give (a custom sampler's guider and schedule, a guider's model and
+    // prompts, a decode's VAE): by name first (positive, negative, model), then by type. Optional inputs stay empty.
+    const parts = this.parts().map(byId).filter(Boolean), Mtip = M;
+    for (const e of [...samplers, ...order, ...parts.filter(x => ["decode", "encode"].includes(kindOf(x)))]) (e.inputs || []).forEach((inp, i) => {
+      if (inp.link != null || inp.widget) return;
+      if (inp.name in (e.constructor?.nodeData?.input?.optional || {})) return;
+      let src = null;
+      if (inp.type === "CONDITIONING") src = /neg/i.test(inp.name) ? Nn : Pn;
+      else if (inp.type === "MODEL" && Mtip) src = [Mtip, out(Mtip, "MODEL")];
+      else if (inp.type === "CLIP" && C) src = [C, out(C, "CLIP")];
+      else if (inp.type === "VAE" && V) src = [V, out(V, "VAE")];
+      else { const g = parts.find(x => x !== e && out(x, inp.type) >= 0); if (g) src = [g, out(g, inp.type)]; }
+      if (src && src[0] && src[0] !== e && src[1] >= 0) src[0].connect(src[1], e, i);
+    });
     this.tuck();
+  }
+  // a prompt node's own words: "text" for CLIP Text Encode; "prompt" and its negative for encoders that give both
+  promptWords(n) {
+    const str = w => typeof w.value === "string", name = wOf(n, "text") ? "text" : (n.widgets || []).find(w => str(w) && (w.options?.multiline || /prompt/i.test(w.name)) && !/neg/i.test(w.name))?.name;
+    const neg = !wOf(n, "text") && (n.widgets || []).find(w => str(w) && /neg/i.test(w.name))?.name;
+    return (name ? field(n, name, "", "text") : "") + (neg ? `<div class="lab2">avoid</div>${field(n, neg, "", "text").replace("<textarea", '<textarea class="neg"')}` : "");
   }
   // ---- what's broken, tile by tile: [why, node to add, its name]
   needs(z) {
     const have = this.parts().length > 0, P = this.properties, w = [];
     if (!have) return w;
+    if (P.hand) return w;   // a workflow brought in whole: what it needs is what it had
+    const smp = this.of("sampler"); if (smp.length && smp.every(n => faceOf(n)) && ["canvas", "prompt", "results"].includes(z)) return w;   // a director makes its own frames, words and output
     if (!this.in(z).length && this.kin().some(x => x.in(z).length)) return w;   // a linked sheet has it
     const parts = this.parts().map(byId), gives = T => this.in("loaders").map(byId).some(n => outs(n).includes(T));
     if (z === "loaders") {
@@ -657,7 +694,7 @@ class DropSheet extends LGraphNode {
         return h;
       },
       sampler: () => this.of("sampler").map(n => item(n, L1 ? field(n, "steps", "steps") + `<div class="bar"><i></i></div>` : `<div class="f"><label>steps</label><input data-w="${n.id}:steps" value="${esc(wOf(n, "steps")?.value)}"><label>cfg</label><input data-w="${n.id}:cfg" value="${esc(wOf(n, "cfg")?.value)}"></div>` + field(n, "sampler_name", "sampler") + field(n, "scheduler", "sched") + (wOf(n, "seed") ? field(n, "seed", "seed") : field(n, "noise_seed", "seed")) + (wOf(n, "start_at_step") ? field(n, "start_at_step", "from step") + field(n, "end_at_step", "to step") : "") + (P.mode !== "i2i" ? field(n, "denoise", "denoise") : "") + `<div class="bar"><i></i></div>`)).join(""),
-      prompt: () => this.of("prompt").map((n, i) => (i ? `<div class="lab2">avoid</div>` : "") + item(n, (!i && byId(P.helpers.textclip) ? `<div class="tcslot" style="--clipH:${P.clipH || 400}px"></div><div class="tcgrip" data-tcgrip title="Drag to make the writing area taller"></div>${this.sfwHtml()}` : field(n, "text", "", "text")).replace("<textarea", i ? '<textarea class="neg"' : "<textarea"), "", ["text"])).join("")
+      prompt: () => this.of("prompt").map((n, i) => (i ? `<div class="lab2">avoid</div>` : "") + item(n, (!i && byId(P.helpers.textclip) ? `<div class="tcslot" style="--clipH:${P.clipH || 400}px"></div><div class="tcgrip" data-tcgrip title="Drag to make the writing area taller"></div>${this.sfwHtml()}` : this.promptWords(n)).replace("<textarea", i ? '<textarea class="neg"' : "<textarea"), "", ["text", "prompt", "negative_prompt"])).join("")
         + (this.of("prompt").length === 1 && byId(P.helpers.negative) ? `<div class="lab2">avoid</div>${field(byId(P.helpers.negative), "text", "", "text").replace("<textarea", '<textarea class="neg"')}` : ""),
       canvas: () => {
         const size = this.of("size")[0], samp = this.of("sampler")[0];
@@ -1152,6 +1189,52 @@ const hwPoll = async () => {   // without Crystools sending its numbers, ComfyUI
 };
 setInterval(hwPoll, 2000);
 const OWN = ["clock", "meter", "board"];
+let STUDIO_PAGES = null;
+// a saved workflow's subgraphs opened up into plain nodes (ComfyUI's newer templates pack their insides into subgraphs):
+// the links into and out of each one join the nodes inside, values set on the outside reach the widget inside, and
+// subgraphs inside subgraphs open too. Ids become paths ("12/5/3") so nothing clashes.
+function flattenFlow(flow) {
+  const defs = Object.fromEntries((flow.definitions?.subgraphs || []).map(d => [d.id, d]));
+  const asObj = l => Array.isArray(l) ? { origin_id: l[1], origin_slot: l[2], target_id: l[3], target_slot: l[4], type: l[5] } : { ...l };
+  const level = (nodes, links, pre, depth) => {
+    const N = [], E = (links || []).map(asObj).map(e => ({ ...e, origin_id: pre + e.origin_id, target_id: pre + e.target_id }));
+    const opened = {};
+    for (const d0 of nodes || []) {
+      const d = { ...d0, id: pre + d0.id }, def = defs[d0.type];
+      if (!def || depth > 6) { N.push(d); continue; }
+      const inner = level(def.nodes, def.links, `${d.id}/`, depth + 1), IN = `${d.id}/-10`, OUT = `${d.id}/-20`;
+      (d0.properties?.proxyWidgets || []).forEach(([nid, wname], i) => {   // promoted widgets: the instance's values onto the nodes inside
+        const t = inner.nodes.find(x => x.id === `${d.id}/${nid}`), v = Array.isArray(d0.widgets_values) ? d0.widgets_values[i] : undefined;
+        if (t && v !== undefined) (t._set = t._set || {})[wname] = v;
+      });
+      const ins = {}, outs = {};
+      for (const e of inner.links) {
+        if (e.origin_id === IN) (ins[e.origin_slot] = ins[e.origin_slot] || []).push(e);
+        else if (e.target_id === OUT) outs[e.target_slot] = e;
+        else E.push(e);
+      }
+      // the node on the canvas can list its sockets in another order than the subgraph inside: match them by name
+      const slot = (list, defList, k) => { const nm = list?.[k]?.name, j = (defList || []).findIndex(x => x.name === nm); return j >= 0 ? j : k; };
+      N.push(...inner.nodes); opened[d.id] = { ins, outs, inAt: k => slot(d0.inputs, def.inputs, k), outAt: k => slot(d0.outputs, def.outputs, k) };
+    }
+    // links that went into or out of a subgraph now go to the nodes inside it
+    for (let pass = 0; pass < 8; pass++) {
+      let again = false;
+      for (let i = E.length - 1; i >= 0; i--) {
+        const e = E[i], into = opened[e.target_id], from = opened[e.origin_id];
+        if (into) { E.splice(i, 1, ...(into.ins[into.inAt(e.target_slot)] || []).map(x => ({ ...e, target_id: x.target_id, target_slot: x.target_slot }))); again = true; continue; }
+        if (from) { const x = from.outs[from.outAt(e.origin_slot)]; E.splice(i, 1, ...(x ? [{ ...e, origin_id: x.origin_id, origin_slot: x.origin_slot }] : [])); again = true; }
+      }
+      if (!again) break;
+    }
+    return { nodes: N, links: E };
+  };
+  const out = level(flow.nodes, flow.links, "", 0);
+  return { nodes: out.nodes, links: out.links, opened: Object.keys(defs).length };
+}
+const LOOKS2 = { studio: { paper: "#1e1825", accent: "#e8b64c", r: 10 }, tan: { paper: "#e3cfa9", accent: "#8a5a2b", r: 10 } };   // the studio's own plum and gold, or the tan sheet
+const LINK = new BroadcastChannel("dpd-studio-link");
+LINK.onmessage = e => allSheets().forEach(x => x.linkIn?.(e.data || {}));
 const START_OPTS = ["Ask each time", "Blank page", "Laid out", "Image starter", "Video starter", "Tidy grid"];   // the sheet's own cards, not parts
 const CLOCK_COLS = [["", "Header brown"], ["#ff2a2a", "Alarm red"], ["#3dff9a", "Neon green"], ["#5ad8ff", "Ice blue"], ["#ffb02e", "Amber"]];
 const OWN_CSS = `
@@ -1191,6 +1274,10 @@ const OWN_CSS = `
 .dpd-drop.free .chooser .chs button{display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:12px;border-radius:12px;cursor:pointer;text-align:left;background:color-mix(in srgb,#fff 55%,var(--bgA));border:1.5px solid color-mix(in srgb,var(--ink) 14%,transparent);color:var(--ink);transition:transform .15s,border-color .15s,box-shadow .15s}
 .dpd-drop.free .chooser .chs button:hover{transform:translateY(-2px);border-color:var(--title);box-shadow:0 8px 18px rgba(60,40,10,.18)}
 .dpd-drop.free .chooser .chs svg{stroke:var(--title)}.dpd-drop.free .chooser .chs b{font:700 calc(14px*var(--z,1)) var(--fl,Karla)}.dpd-drop.free .chooser .chs small{color:var(--mute);font-size:calc(11.5px*var(--z,1));line-height:1.35}
+.dpd-drop.free .chooser .chrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:center}
+.dpd-drop.free .chooser .chs.pages{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));align-items:start}
+.dpd-drop.free .chooser .pg{display:flex;flex-direction:column;gap:6px}.dpd-drop.free .chooser .pg h5{margin:4px 0 0;font:700 calc(11px*var(--z,1)) var(--fl,Karla);letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.dpd-drop.free .chooser .cherr{color:#b3261e;font-weight:600;max-width:640px;text-align:center}
 .dpd-drop.free .chooser .chk{display:flex;align-items:center;gap:6px;color:var(--ink2);font-size:calc(12px*var(--z,1));cursor:pointer}.dpd-drop.free .chooser .chk small{color:var(--mute)}
 .dpd-drop.free .fixbar{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:9;display:flex;flex-wrap:wrap;align-items:center;gap:6px;max-width:min(560px,calc(100% - 260px));padding:5px 6px 5px 8px;border-radius:16px;background:#ffe9b8;border:1.5px solid #d99a2b;box-shadow:0 6px 18px rgba(120,70,0,.22);color:#5a3a06}
 .dpd-drop.free .fixbar.low{top:44px}
@@ -1253,6 +1340,7 @@ class BlankSheet extends DropSheet {
     const wd = this.widgets?.find(w => w.name === "sheet"); if (wd?.options) wd.options.getMinHeight = () => 200;   // the page is as tall as you drag it
     this.size = [820, 560];
     this.el.addEventListener("change", e => { const v = e.target.closest("[data-startsel]")?.value; if (v) app.extensionManager?.setting?.set?.("DPD.Sheet.Start", v); });
+    this.el.addEventListener("input", e => { const t = e.target.closest("[data-w]"); if (!t || !this.properties.studio) return; const [nid, name] = t.dataset.w.split(":"); this.linkOut(nid, name, t.type === "number" || t.type === "range" ? +t.value : t.value); });
     this.el.addEventListener("input", e => { const c = e.target.closest("[data-clockcin]"); if (c) { this.properties.clockC = c.value; this.el.querySelectorAll(".clk").forEach(k => { k.style.setProperty("--cc", c.value); k.classList.add("glow"); }); changed(); } });
     setTimeout(() => { if (!this._loaded && this.graph) this.startAs(); }, 60);
     this.el.addEventListener("pointerdown", e => { if (!e.target.closest("[data-plug]")) return; e.preventDefault(); e.stopPropagation(); this.plugDrag(e); }, true);
@@ -1276,8 +1364,96 @@ class BlankSheet extends DropSheet {
   chooserHtml() {
     const C = [["Blank page", "layers", "Just the paper. Drop anything on it."], ["Laid out", "dial", "The timer, memory ring, Text Clip, Comfy Blueprint and System Check."], ["Image starter", "photo", "Loaders, prompt, sampler, size and results, ready to fill in."],
       ["Video starter", "film", "The same for video: frames, sampler and a saved video."], ["Tidy grid", "wide", "Sections arrange themselves in neat rows. Drag one to reorder."]];
-    return `<div class="chooser"><h3>How would you like to start?</h3><div class="chs">${C.map(([v, i, t]) => `<button data-startpick="${v}">${svg(i, 22)}<b>${v}</b><small>${t}</small></button>`).join("")}</div>
-      <label class="chk"><input type="checkbox" data-startkeep> Always start this way <small>(change it later in the gear, or in ComfyUI's Settings)</small></label></div>`;
+    const P = this.properties, pages = STUDIO_PAGES || [], tan = (P.look?.paper || "#e3cfa9") === LOOKS2.tan.paper;
+    if (this.busy) return `<div class="chooser"><h3>${esc(this.busy)}</h3></div>`;
+    if (this.studioOpen) return `<div class="chooser"><h3>Which studio page?<span class="sp"></span></h3><div class="chs pages">${[...new Set(pages.map(p => p.group))].map(g => `<div class="pg"><h5>${esc(g)}</h5>${pages.filter(p => p.group === g).map(p => `<button data-page="${esc(p.id)}"><b>${esc(p.title)}</b><small>${esc(p.about)}</small></button>`).join("")}</div>`).join("")}</div>
+      ${this.studioErr ? `<div class="cherr">${esc(this.studioErr)}</div>` : ""}<button class="mini" data-studioback>← Back</button></div>`;
+    return `<div class="chooser"><h3>How would you like to start?</h3><div class="chs">${C.map(([v, i, t]) => `<button data-startpick="${v}">${svg(i, 22)}<b>${v}</b><small>${t}</small></button>`).join("")}
+      ${pages.length ? `<button data-studioopen>${svg("spark", 22)}<b>From the studio</b><small>Any DPD Studio page, built with the studio's own recipe and kept in step with it.</small></button>` : ""}
+      <button data-flowpick>${svg("box", 22)}<b>Bring a workflow</b><small>Any ComfyUI workflow file: laid out on the page, its wiring kept.</small></button></div>
+      <div class="chrow"><label class="chk"><input type="checkbox" data-startkeep> Always start this way</label><span class="seg2">${[["studio", "Studio colours"], ["tan", "Tan"]].map(([k, l]) => `<button data-lookpick="${k}" class="${(k === "tan") === tan ? "on" : ""}">${l}</button>`).join("")}</span></div></div>`;
+  }
+  // ---- a whole workflow onto the page: ComfyUI's API format (what the studio's builders make) or a saved workflow.
+  // Its wiring is kept exactly; the nodes it names that aren't installed are listed in the missing bar.
+  importFlow(flow) {
+    const P = this.properties, made = {}, skipped = [], api = !Array.isArray(flow?.nodes);
+    P.hand = true; delete P.choosing; this._bulk = true;
+    try {
+      if (api) {
+        const g = flow.prompt && !flow.prompt.class_type ? flow.prompt : flow;
+        for (const [id, d] of Object.entries(g)) { const n = d?.class_type && LiteGraph.createNode(d.class_type); if (!n) { skipped.push(d?.class_type || id); continue; } graph().add(n); made[id] = n; }
+        for (const [id, d] of Object.entries(g)) {
+          const n = made[id]; if (!n) continue;
+          for (const [k, v] of Object.entries(d.inputs || {})) {
+            if (Array.isArray(v) && v.length === 2 && typeof v[1] === "number" && made[v[0]]) { const i = n.inputs?.findIndex(x => x.name === k) ?? -1; if (i >= 0) made[v[0]].connect(v[1], n, i); }
+            else { const w = wOf(n, k); if (w && !Array.isArray(v)) w.value = v; }
+          }
+        }
+      } else {
+        flow = flattenFlow(flow);
+        const byOld = Object.fromEntries(flow.nodes.map(d => [d.id, d]));
+        for (const d of flow.nodes) {
+          if (d.type === "Note" || d.type === "MarkdownNote") continue;   // notes stay out: the sheet explains itself
+          const n = LiteGraph.createNode(d.type); if (!n) { skipped.push(d.type); continue; } graph().add(n); made[d.id] = n;
+          const wv = d.widgets_values;
+          if (Array.isArray(wv)) (n.widgets || []).forEach((w, i) => { if (i < wv.length && wv[i] !== undefined && wv[i] !== null) try { w.value = wv[i]; } catch {} });
+          else if (wv && typeof wv === "object") (n.widgets || []).forEach(w => { if (w.name in wv) try { w.value = wv[w.name]; } catch {} });
+          if (d._set) for (const [k, v] of Object.entries(d._set)) { const w = wOf(n, k); if (w) try { w.value = v; } catch {} }
+          const grow = (n.widgets || []).find(w => w.type === "button" && /update.?inputs/i.test(w.name || w.label || ""));   // KJNodes and friends: the input count only takes effect when pressed
+          if (grow && (d.inputs || []).some(x => x?.name && !n.inputs?.some(y => y.name === x.name))) try { grow.callback?.(grow.value, app.canvas, n); } catch {}
+          if (d.title && d.title !== n.title) n.title = d.title; if (d.mode) n.mode = d.mode;
+        }
+        // by name: a fresh node's slots can sit in another order, and some grow a socket only once the one before is
+        // plugged (image1, then image2...), so a link with nowhere to go yet waits a pass
+        let todo = flow.links || [];
+        for (let pass = 0; pass < 4 && todo.length; pass++) {
+          const later = [];
+          for (const l of todo) {
+            const { origin_id: o, origin_slot: os, target_id: t, target_slot: ts } = l, a = made[o], b = made[t]; if (!a || !b) continue;
+            const on = byOld[o]?.outputs?.[os]?.name, tn = byOld[t]?.inputs?.[ts]?.name;
+            const oi = on != null ? a.outputs.findIndex(x => x.name === on) : -1, ti = tn != null ? b.inputs.findIndex(x => x.name === tn) : -1;
+            if (tn != null && ti < 0 && pass < 3) { later.push(l); continue; }
+            a.connect(oi >= 0 ? oi : os, b, ti >= 0 ? ti : ts);
+          }
+          todo = later;
+        }
+      }
+      for (const n of Object.values(made)) this.absorb(n);
+    } finally { this._bulk = false; }
+    P.skipped = [...new Set(skipped)];
+    P.made = Object.fromEntries(Object.entries(made).map(([k, n]) => [k, String(n.id)]));   // the workflow's ids -> the nodes on the sheet
+    this.norm(); this.wire(); this.render(); changed();
+    return { made: Object.keys(made).length, skipped: P.skipped };
+  }
+  // the studio's pages, from the studio bridge (empty without the studio, and then no Studio card shows)
+  async studioPages() { if (STUDIO_PAGES) return STUDIO_PAGES; try { const r = await api.fetchApi("/dpd/sheet/pages"); STUDIO_PAGES = r.ok ? await r.json() : []; } catch { STUDIO_PAGES = []; } return STUDIO_PAGES; }
+  async becomePage(id) {
+    const P = this.properties; let last = {}; try { last = JSON.parse(localStorage.getItem(`dpd.link.${id}`) || "{}"); } catch {}
+    this.busy = "Building it with the studio's own recipe…"; this.render();
+    const r = await api.fetchApi("/dpd/sheet/recipe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page: id, settings: last }) }).then(x => x.json()).catch(e => ({ error: String(e) }));
+    this.busy = null;
+    if (r.error || !r.prompt) { this.studioErr = r.error || "The studio didn't answer."; this.render(); return; }
+    if (!P.look?.c && !P.lookSet) P.look = { ...LOOKS2.studio };
+    this.importFlow(r.prompt);
+    P.studio = { page: r.page, title: r.title }; this.title = `${r.title} · DPD Sheet`;
+    P.fields = Object.fromEntries(Object.entries(r.fields || {}).map(([f, [nid, input]]) => [f, [P.made?.[nid], input]]).filter(([, [nid]]) => nid));
+    if (P.grid == null) P.grid = true;
+    this.render(); changed();
+  }
+  // a field changed here: the studio page (and any other sheet that is that page) hears it at once
+  linkOut(nid, input, value) {
+    const P = this.properties; if (!P.studio) return;
+    for (const [f, [id, inp]] of Object.entries(P.fields || {})) if (String(id) === String(nid) && inp === input) {
+      LINK.postMessage({ page: P.studio.page, field: f, value, from: `sheet:${this.id}` });
+      try { const k = `dpd.link.${P.studio.page}`, v = JSON.parse(localStorage.getItem(k) || "{}"); v[f] = value; localStorage.setItem(k, JSON.stringify(v)); } catch {}
+    }
+  }
+  linkIn(d) {
+    const P = this.properties; if (P.studio?.page !== d.page || d.from === `sheet:${this.id}`) return;
+    const [id, input] = P.fields?.[d.field] || []; const n = byId(id); if (!n) return;
+    const w = wOf(n, input); if (!w || w.value === d.value) return;
+    let v = d.value; if (d.field === "prompt" && typeof w.value === "string" && w.value.includes("\u00a7")) v = d.value;
+    setW(n, input, v); clearTimeout(this._lt); this._lt = setTimeout(() => this.render(), 120);
   }
   // Tidy grid: every card in rows, in the page's order, the sheet's own cards first
   cardW(z) { return z === "prompt" ? (this.properties.helpers.textclip ? 620 : 540) : (z === "results" || z === "flow" || z.startsWith("step:")) ? 360 : z === "system" ? 440 : z === "clock" ? 352 : z === "meter" ? 264 : z === "board" ? 380 : z.startsWith("face:") ? 900 : CARD; }
@@ -1308,6 +1484,7 @@ class BlankSheet extends DropSheet {
     const P = this.properties, seen = new Set(), out = [];
     for (const z of [...Object.keys(ZONES), ...(P.order || []).filter(z => String(z).startsWith("step:"))]) for (const n of this.needs(z)) if (!seen.has(n[0])) { seen.add(n[0]); out.push(n); }
     for (const id of this.parts()) { const n = byId(id); if (n && !LiteGraph.registered_node_types[n.type]) out.push([`${n.title || n.type} isn't installed.`, null, null, true]); }
+    for (const t of P.skipped || []) out.push([`${t} isn't installed, so it was left out.`, null, null, true]);
     return out;
   }
   // add each missing node in turn (what one brings can settle the next), each tried once
@@ -1362,7 +1539,7 @@ class BlankSheet extends DropSheet {
     const P = this.properties, inn = this.el.querySelector(".dpd-in"); if (!inn) return;
     const have = this.parts().length, page = inn.querySelector(".page");
     page.insertAdjacentHTML("afterbegin", this.ownTiles());
-    if (P.choosing) inn.insertAdjacentHTML("beforeend", this.chooserHtml());
+    if (P.choosing) { if (!STUDIO_PAGES) this.studioPages().then(() => this.render()); inn.insertAdjacentHTML("beforeend", this.chooserHtml()); }
     const tiles = [...page.querySelectorAll(".tile")], missing = tiles.filter(t => t.classList.contains("empty")).flatMap(t => [...t.querySelectorAll(".need")]);
     tiles.filter(t => t.classList.contains("empty") || (!have && t.dataset.zone === "canvas")).forEach(t => t.remove());   // a blank page stays blank
     page.classList.add("paper"); this.el.classList.toggle("melt", P.style === "melt"); this.el.classList.toggle("clipown", !!P.clipOwn);
@@ -1384,7 +1561,7 @@ class BlankSheet extends DropSheet {
     const hd = inn.querySelector(".hd"), look = inn.querySelector(".look"), lvl = inn.querySelector(".lvl"), pipes = inn.querySelector(".pipes"), ok = inn.querySelector(":scope > .ok"), go = inn.querySelector(":scope > .go");   // the sheet's own Run, not the Text Clip's Ask
     hd.querySelector(".cols")?.previousSibling?.remove?.(); hd.querySelector(".cols")?.remove();
     const set = document.createElement("div"); set.className = "set"; set.hidden = !this.gearOpen;
-    set.innerHTML = `<h4>Sheet settings<span class="sp"></span><button class="mini" data-setcancel title="Put back every setting as it was when you opened this">Cancel</button><button class="mini ok2" data-gear>Done</button></h4><div class="sty">STYLE<span class="seg2">${[["cards", "Cards", "Each section in its own box"], ["melt", "Melt", "Boxes melt into the page; only the fields stand out"]].map(([k, l, t]) => `<button data-sheetstyle="${k}" class="${(P.style || "cards") === k ? "on" : ""}" title="${t}">${l}</button>`).join("")}</span></div>`;
+    set.innerHTML = `<h4>Sheet settings<span class="sp"></span><button class="mini" data-setcancel title="Put back every setting as it was when you opened this">Cancel</button><button class="mini ok2" data-gear>Done</button></h4><div class="sty">STYLE<span class="seg2">${[["cards", "Cards", "Each section in its own box"], ["melt", "Melt", "Boxes melt into the page; only the fields stand out"]].map(([k, l, t]) => `<button data-sheetstyle="${k}" class="${(P.style || "cards") === k ? "on" : ""}" title="${t}">${l}</button>`).join("")}</span><span class="seg2">${[["studio", "Studio colours", "The studio's own plum and gold"], ["tan", "Tan", "The tan sheet"]].map(([k, l, t]) => `<button data-lookpick="${k}" class="${(P.look?.paper || "#e3cfa9") === LOOKS2[k].paper ? "on" : ""}" title="${t}">${l}</button>`).join("")}</span></div>${P.studio ? `<div class="xrow" title="Built by the studio's own recipe; its words stay in step with the studio page, both ways">${svg("link", 12)} This sheet is the studio's <b>${esc(P.studio.title)}</b> page</div>` : ""}`;
     set.append(hd.querySelector(".kind"), hd.querySelector(".typ"));
     if (look) set.append(look); set.append(lvl);
     const L = P.look || {}, C = L.c || {}, cur = getComputedStyle(this.el);
@@ -1449,6 +1626,7 @@ class BlankSheet extends DropSheet {
         if (![...rects, corner].some(([a, b, c, d]) => x < a + c + GAP && a < x + w + GAP && y < b + d + GAP && b < y + h + GAP)) { spot = { x, y, w }; break; }
         if (x + w > room - GAP) break;
       }
+      if (!spot) spot = { x: GAP, y: Math.max(GAP, ...rects.map(([, b, , d]) => b + d + GAP)), w };   // a very full page: below everything
       F[z] = spot; put(t, spot); rects.push([spot.x, spot.y, w, h]); this.placedNew = true;
       (this.fresh = this.fresh || {})[z] = Date.now() + 700;   // it lands as a card, then melts into the page
     }
@@ -1592,6 +1770,15 @@ class BlankSheet extends DropSheet {
     if (q("[data-power]")) { const z = q("[data-power]").dataset.power, Z = SP.offZ = SP.offZ || {}; Z[z] = !Z[z]; this.modes(); allSheets().forEach(x => x.render()); changed(); return; }
     if (q("[data-boardoff]")) { const x = byId(q("[data-boardoff]").dataset.boardoff); if (x) { x.properties.off = !x.properties.off; allSheets().forEach(y => y.modes()); allSheets().forEach(y => y.render()); changed(); } return; }
     if (q("[data-boardz]")) { const [id, z] = q("[data-boardz]").dataset.boardz.split("|"), x = byId(id); if (x) { const Z = x.properties.offZ = x.properties.offZ || {}; Z[z] = !Z[z]; x.modes(); allSheets().forEach(y => y.render()); changed(); } return; }
+    if (q("[data-studioopen]")) { this.studioOpen = true; this.studioErr = null; this.render(); return; }
+    if (q("[data-studioback]")) { this.studioOpen = false; this.render(); return; }
+    if (q("[data-page]")) { this.studioOpen = false; this.becomePage(q("[data-page]").dataset.page); return; }
+    if (q("[data-lookpick]")) { SP.look = { ...(SP.look || {}), ...LOOKS2[q("[data-lookpick]").dataset.lookpick], c: {} }; SP.lookSet = true; this.gearOpen = !SP.choosing && this.gearOpen; this.render(); changed(); return; }
+    if (q("[data-flowpick]")) {
+      const f = document.createElement("input"); f.type = "file"; f.accept = ".json,application/json";
+      f.onchange = async () => { try { const r = this.importFlow(JSON.parse(await f.files[0].text())); this.flowNote = r.skipped.length ? `${r.made} nodes laid out; ${r.skipped.length} kinds aren't installed.` : `${r.made} nodes laid out, wired as the workflow was.`; } catch (e) { this.flowNote = `That file isn't a ComfyUI workflow (${e.message}).`; } this.render(); };
+      f.click(); return;
+    }
     if (q("[data-startpick]")) { const v = q("[data-startpick]").dataset.startpick; if (this.el.querySelector("[data-startkeep]")?.checked) app.extensionManager?.setting?.set?.("DPD.Sheet.Start", v); this.startWith(v); return; }
     if (q("[data-gridmode]")) { SP.grid = q("[data-gridmode]").dataset.gridmode === "1"; this.gearOpen = true; this.render(); changed(); return; }
     if (q("[data-fixopen]")) { this.fixOpen = !this.fixOpen; this.render(); return; }
@@ -1863,4 +2050,4 @@ app.registerExtension(EXT);
 // an extension that loads late can miss ComfyUI's start-up calls (seen in a fresh browser profile): catch up once the
 // canvas exists, so the sheet can always be added
 setTimeout(function catchUp() { if (!app.canvas?.canvas) return setTimeout(catchUp, 500); register(); EXT.setup(); }, 2000);
-window.dpdDrop = { kindOf, sheets: allSheets };
+window.dpdDrop = { kindOf, sheets: allSheets, flatten: flattenFlow };

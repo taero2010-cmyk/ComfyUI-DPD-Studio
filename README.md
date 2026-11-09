@@ -142,7 +142,11 @@ A new sheet asks, right on the paper:
 - **Image starter / Video starter:** a sampler plus everything it needs (model, prompt, size or frames, a preview or a saved video), all wired.
 - **Tidy grid:** sections arrange themselves in neat rows. Drag one to change the order.
 
+- **Bring a workflow:** pick any ComfyUI workflow file, saved or API format. It's laid out on the page section by section with its own wiring kept exactly. Subgraphs (as in ComfyUI's own templates) are opened up, nested ones too.
+
 Tick **Always start this way** to skip the question. Change it later in the sheet's gear or in **Settings → DPD Studio**.
+
+Beside the choices, **Studio colours / Tan** picks the sheet's look: deep plum and gold, or the warm tan paper. It's in the gear too.
 
 ### A page you lay out yourself
 - Move any section by its title bar and widen it from its corner. **Snap to grid** keeps things neat, or switch to **Tidy grid**.
@@ -171,6 +175,21 @@ When the page needs something to run, an amber bar at the top says what, in plai
 
 ### Director and timeline nodes on the page
 Nodes that draw their own view (director and timeline nodes from other packs) get a card on the sheet showing that view, live and usable. Many of them are dressed in the sheet's colours, without changing their code; a paint button on the card switches between the sheet's colours and their own.
+
+### Smarter wiring
+Tested on all 280 of ComfyUI's official templates and 467 example workflows from 80 node packs:
+- With **Bring a workflow**, the templates came across with every one of their 8,521 links intact.
+- Sockets are matched by name, so a subgraph whose inputs are in a different order still wires correctly.
+- Inputs that grow as you connect them (image1, image2…) fill in, including KJNodes' "Update inputs" nodes.
+- When the sheet wires dropped nodes itself, it now:
+  - knows a ConditioningZeroOut is the negative prompt;
+  - tells positive from negative by title and words;
+  - handles encoders that give both prompts at once, and custom samplers (SamplerCustomAdvanced);
+  - puts picture preparation (resize, Canny, depth, pose) before the render;
+  - makes a last pass to fill whatever still fits.
+- Pages with over a hundred sections lay out without trouble.
+
+Switch nodes, primitives feeding numbers, and two copies of the same step in parallel are still best brought in with **Bring a workflow**.
 
 ### Under the hood
 The nodes you drop stay real ComfyUI nodes, tucked under the sheet. The workflow runs exactly as if you had wired it by hand, and the sheet itself never goes to the server. **Show the real nodes and wiring** in the gear lays them out beside the sheet, wires and all.
