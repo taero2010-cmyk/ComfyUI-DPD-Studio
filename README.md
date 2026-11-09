@@ -6,7 +6,8 @@ Free tools for people who can't afford the paid ones. These come out of **DPD St
 | --- | --- |
 | [Comfy Blueprint](#comfy-blueprint) | See where your render is, and learn what every node does and why it's wired there |
 | [Comfy Conduit](#comfy-conduit) | Magnets, stacks and passthrough lanes: build a workflow by snapping nodes together, with no long wires |
-| [Drop Sheet](#drop-sheet) | One beautiful page instead of a tangle: drop ordinary nodes on it and it lays them out, wires them and shows the result |
+| [DPD Sheet](#dpd-sheet) | One beautiful page instead of a tangle: drop ordinary nodes on it and it lays them out, wires them and shows the result |
+| [System Check](#system-check) | Reads your machine, suggests the picture size, steps and more, and a test run finds the biggest size that's safe |
 
 More sections are on the way.
 
@@ -126,51 +127,60 @@ Turn it all off under **Settings → Comfy Blueprint → Conduit**.
 
 <br clear="right">
 
-## Drop Sheet
+## DPD Sheet
 
 **Design your workflow like a page, not a plate of spaghetti.**
 
-The Drop Sheet (**Add Node → DPD Studio → Drop Sheet**) starts as an empty page with zones: **Loaders, Sampler, Prompt, Canvas, Pictures and Results**. Drag any ordinary ComfyUI node onto it and the node finds its zone, tucks itself under the paper, and its zone lights up with just the settings that matter. The sheet does the wiring for you. You never draw a wire inside it.
+Add it from **Add Node → DPD Studio → DPD Sheet** (searching for "sheet", "image sheet" or "video sheet" finds it too). Drag any ordinary ComfyUI node onto it: the node finds its section (**Loaders, Sampler, Prompt, Canvas, Pictures, Results**), tucks itself under the paper, and the sheet does the wiring. You never draw a wire inside it.
 
-The Drop Sheet is a node you add yourself, so it works in any workflow you put it in, with or without a Comfy Blueprint node.
+The sheet is a node you add yourself, so it works in any workflow, with or without a Comfy Blueprint node.
 
-### Zones that grow
-- **Loaders**, top left, is one box: your model, its text encoder, the **VAE** (the model's own, or pick any VAE file), every **LoRA** (reorder them with ↑) and other models such as upscale or ControlNet models.
-- Each LoRA rides **the model listed above it**. Wan 2.2's high-noise LoRA goes on the high-noise model, and the low-noise LoRA on the low-noise model.
-- Any other node gets **a tile of its own**, built from its settings, and joins the chain where it belongs:
-  - picture steps (an upscaler) come after the picture is made;
-  - model steps come after the LoRAs;
-  - prompt and latent steps come before the sampler.
-- The sheet grows **down and sideways**: from 2 columns to 3 or 4 as it fills, or pick with **Columns**.
+### How would you like to start?
+A new sheet asks, right on the paper:
+- **Blank page:** just the paper. Drop anything on it.
+- **Laid out:** the timer, the memory ring, the Comfy Blueprint and the System Check, ready on the page.
+- **Image starter / Video starter:** a sampler plus everything it needs (model, prompt, size or frames, a preview or a saved video), all wired.
+- **Tidy grid:** sections arrange themselves in neat rows. Drag one to change the order.
 
-### Tiles you can arrange
-Drag a tile by its **⠿** grip to move it, and make it wide or narrow with **↔**. Because the wiring is invisible, **the order of the tiles is the order things happen**: put the face fix before the upscale by dragging its tile in front.
+Tick **Always start this way** to skip the question. Change it later in the sheet's gear or in **Settings → DPD Studio**.
 
-### The plumbing stays out of sight
-VAE Decode and Encode, an empty negative prompt and the start picture's loader are made and wired for you. A drawer at the bottom lists them for anyone curious.
-
-### Red boxes that fix themselves
-When something is missing, its tile turns red and says what it needs in plain words, with a button that adds the right node, already wired. For example: *"No sampler: nothing will be painted. ＋ KSampler"*, or *"Needs an UPSCALE_MODEL. ＋ Load Upscale Model"*.
-
-### Image and video
-- **Image:** Text → image, or Image → image, with a start picture, an upload button and a **Change** slider (the sampler's denoise).
-- **Video:**
-  - **Frames** (size and length, or **Wan Image to Video**) and a **Start frame**.
-  - **Samplers that stack** in tile order. Wan 2.2 takes two: high noise, then low noise.
-  - Steps that take both prompts (**LTX Conditioning**, **Wan Image to Video**) are wired into both.
-  - **Save Video** gets its Create Video step made for it, at the right frame rate.
-- Results show **in the sheet**, pictures and playing videos alike, and the sheet grows to fit them.
-
-### Sheets wired together
-Every sheet has a **picture in** and a **picture out** socket. Wire one sheet's out into another's in, to as many sheets as you like and in chains as long as you like. The next sheet starts from the first sheet's finished picture: a video's start frame, an image-to-image, or any step that wants a picture.
+### A page you lay out yourself
+- Move any section by its title bar and widen it from its corner. **Snap to grid** keeps things neat, or switch to **Tidy grid**.
+- **Group** sections (Shift+click their titles) so they move together. **Ctrl+drag** a title to copy a section. Drag a section off the sheet to take its nodes back out onto the canvas.
+- **Wheel zoom** and **pan** work over the sheet the same as on the canvas.
 
 ### Make it yours
-- **Simple / Standard / Everything:** from just what a first picture needs to every setting of every part, the plumbing too.
-- **Font and size** for the sheet's own words, including easy-to-read fonts for big screens.
-- **Look:** paper colour (presets such as Forest, Midnight and Paper, or any colour), accent colour, corner roundness, and cozy or compact spacing. On light paper the words turn dark by themselves.
-- While it renders, **the working tile glows** and the sampler shows its progress.
+- **Cards or Melt:** each section in its own card, or melted into the paper with only the fields standing out.
+- **Colours:** paper, accent, titles, words and fields, with palettes, any colour, an eyedropper that picks from the screen, and a row of your own colours. Title bands with adjustable corners, for the whole sheet or per section.
+- **Background pictures** for the sheet or a single section, and **saved looks** you can put on any other section.
+- **Simple / Standard / Everything:** from just what a first picture needs to every setting of every part.
 
-**Under the hood:** the nodes you drop stay real ComfyUI nodes, tucked under the sheet. The workflow runs exactly as if you had wired it by hand, and the sheet itself never goes to the server.
+### While it renders
+- **Live preview** in Results as the sampler paints, with its step count, and **a picture after each step** (an upscale, a fix) in that step's own section.
+- **Timer** (off until you turn it on in the gear): big digits for how long the render has run, the last and best times and what's waiting. Pick its colour; Alarm red on a dark face looks like a bedside clock.
+- **Memory ring:** neon rings for VRAM, GPU load and RAM that go green, yellow, orange and red as they fill. GPU load comes from the Crystools monitor when it's on.
+
+### Linked sheets and the Switchboard
+- Drag the **plug** on a sheet's right edge onto another sheet, or use the **chain** button by the gear, to link them. A soft cord shows the link.
+- Linked sheets share what they have: a Loaders sheet feeds a Text sheet and a Picture sheet, and **pictures flow from left to right**, so an upscale or fix on its own sheet takes the finished picture from the sheet before it.
+- The **Switchboard** lists every sheet and every step with an on/off switch. A step that's off lets the picture straight through, which makes turning an upscale on and off one click. A sheet that's off doesn't save or show, and sheets it feeds turn off with it. A strip along its top shows the chain and lights up the sheet that's working.
+- Sheets also have **picture in** and **picture out** sockets, for wiring sheets together the old way.
+
+### Nothing missing
+When the page needs something to run, an amber bar at the top says what, in plain words, with a ＋ button that adds the right node, already wired. **Fix it all** adds everything at once. A node from a pack you don't have gets a **Find it** button that opens the Manager's missing-packs list.
+
+### Director and timeline nodes on the page
+Nodes that draw their own view (director and timeline nodes from other packs) get a card on the sheet showing that view, live and usable. Many of them are dressed in the sheet's colours, without changing their code; a paint button on the card switches between the sheet's colours and their own.
+
+### Under the hood
+The nodes you drop stay real ComfyUI nodes, tucked under the sheet. The workflow runs exactly as if you had wired it by hand, and the sheet itself never goes to the server. **Show the real nodes and wiring** in the gear lays them out beside the sheet, wires and all.
+
+### Older sheets
+Workflows made with the earlier **Drop Sheet** or **Blank Sheet** still open and work. They've left the Add Node menu, and a Drop Sheet has a **Switch to the new DPD Sheet** button that moves everything across.
+
+## System Check
+
+Search for **System Check** in Add Node, or **Add** it from a sheet's gear (under Recommended). It reads your graphics card, memory, disk and attention, and suggests a picture size, steps, CFG and more for the model in your workflow, each with a reason. **Run test** renders a few quick previews at growing sizes (nothing is saved) and finds the biggest size that stays fast. **Use these settings** puts the advice into your workflow, with an Undo.
 
 ## License
 

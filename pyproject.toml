@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-dpd-studio"
-description = "DPD Studio nodes for ComfyUI: Comfy Blueprint (see where your render is, and what every node does and why), Comfy Conduit (magnetic snapping, stacks and passthrough lanes) and the Drop Sheet (drop nodes on one beautiful page and it lays them out, wires them and shows the result). Blueprint and Conduit stay off until a workflow has a Comfy Blueprint node; the Drop Sheet works wherever you add it."
-version = "0.3.0"
+description = "DPD Studio nodes for ComfyUI: Comfy Blueprint (see where your render is, and what every node does and why), Comfy Conduit (magnetic snapping, stacks and passthrough lanes), the DPD Sheet (drop nodes on one beautiful page and it lays them out, wires them and shows the result, with starters, linked sheets, a Switchboard, a timer and a memory ring) and System Check (settings that suit your machine). Blueprint and Conduit stay off until a workflow has a Comfy Blueprint node; the DPD Sheet works wherever you add it."
+version = "0.4.0"
 license = { file = "LICENSE" }
 dependencies = []
 
