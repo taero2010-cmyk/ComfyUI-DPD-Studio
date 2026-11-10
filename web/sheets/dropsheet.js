@@ -1930,45 +1930,7 @@ function sheetUnder(n) {
   const cx = n.pos[0] + (n.size?.[0] || 100) / 2, cy = n.pos[1] + 15;
   return allSheets().find(s => cx > s.pos[0] && cx < s.pos[0] + s.size[0] && cy > s.pos[1] - 30 && cy < s.pos[1] + s.size[1]);
 }
-// the mouse wheel zooms the canvas over any node's own boxes too (sheets, timelines, anything drawn in HTML), unless
-// what's under the pointer can really scroll that way or the node uses the wheel itself
-function wheelZoom() {
-  if (wheelZoom.on) return; wheelZoom.on = true;
-  addEventListener("wheel", e => {
-    const c = app.canvas?.canvas, t = e.target;
-    if (e.defaultPrevented || e.__dpd || !c || !(t instanceof Element) || t === c || !t.closest(".dom-widget")) return;
-    for (let el = t; el && !el.classList.contains("dom-widget"); el = el.parentElement) {
-      if (e.ctrlKey) break;
-      const s = getComputedStyle(el), y = /(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1, x = /(auto|scroll)/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1;
-      if (y && (e.deltaY > 0 ? el.scrollTop + el.clientHeight < el.scrollHeight - 1 : e.deltaY < 0 && el.scrollTop > 0)) return;
-      if (x && e.shiftKey) return;
-      if (el.tagName === "SELECT" && document.activeElement === el) return;
-    }
-    e.preventDefault();
-    const f = new WheelEvent("wheel", e); f.__dpd = true; c.dispatchEvent(f);
-  }, { passive: false });
-}
-// panning without leaving the node: drag the empty paper of a sheet, or hold the middle button, or hold Space and drag,
-// anywhere over a node drawn in HTML. The canvas moves under your hand just as it does off the node.
-function panAnywhere() {
-  if (panAnywhere.on) return; panAnywhere.on = true;
-  let space = false;
-  const typing = () => { const a = document.activeElement; return a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable); };
-  addEventListener("keydown", e => { if (e.code === "Space" && !typing()) space = true; }, true);
-  addEventListener("keyup", e => { if (e.code === "Space") space = false; }, true);
-  addEventListener("blur", () => { space = false; });
-  addEventListener("mousedown", e => { if (e.button === 1 && e.target instanceof Element && e.target.closest(".dom-widget")) e.preventDefault(); }, true);   // no auto-scroll arrows
-  addEventListener("pointerdown", e => {
-    const c = app.canvas, t = e.target; if (!c || !(t instanceof Element) || !t.closest(".dom-widget")) return;
-    const paper = !!t.closest(".dpd-drop") && t.matches(".paper, .page, .dpd-in, .dpd-drop, .blank, .grpbox");
-    if (!(e.button === 1 || (e.button === 0 && (space || paper)))) return;
-    e.preventDefault(); e.stopPropagation();
-    let x = e.clientX, y = e.clientY; const cur = document.body.style.cursor; document.body.style.cursor = "grabbing";
-    const mv = m => { const k = c.ds.scale || 1; c.ds.offset[0] += (m.clientX - x) / k; c.ds.offset[1] += (m.clientY - y) / k; x = m.clientX; y = m.clientY; c.setDirty(true, true); };
-    const up = () => { removeEventListener("pointermove", mv, true); removeEventListener("pointerup", up, true); document.body.style.cursor = cur; };
-    addEventListener("pointermove", mv, true); addEventListener("pointerup", up, true);
-  }, true);
-}
+// zooming and panning over the sheet: zoompan.js (Zoom & Pan), on wherever a DPD sheet is
 const dragged = () => Object.values(app.canvas?.selected_nodes || {}).filter(n => !isSheet(n) && !n.properties?.[KEY]);
 function watch() {
   const el = app.canvas?.canvas; if (!el || el.dataset.dpdDrop) return; el.dataset.dpdDrop = 1;
@@ -2026,7 +1988,7 @@ const EXT = {
   },
   setup() {
     if (EXT.ready) return; EXT.ready = true;
-    watch(); wheelZoom(); panAnywhere();
+    watch();
     (function again(n) { if (!tidyMenu() && n < 20) setTimeout(() => again(n + 1), 500); })(0);
     // the real wires between parts tucked inside sheets stay hidden (the cords stand for them); x-ray shows them
     const LC = app.canvas?.constructor?.prototype, rl = LC?.renderLink;

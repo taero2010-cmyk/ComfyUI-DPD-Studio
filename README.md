@@ -8,6 +8,7 @@ Free tools for people who can't afford the paid ones. These come out of **DPD St
 | [Comfy Conduit](#comfy-conduit) | Magnets, stacks and passthrough lanes: build a workflow by snapping nodes together, with no long wires |
 | [DPD Sheet](#dpd-sheet) | One beautiful page instead of a tangle: drop ordinary nodes on it and it lays them out, wires them and shows the result |
 | [System Check](#system-check) | Reads your machine, suggests the picture size, steps and more, and a test run finds the biggest size that's safe |
+| [Zoom & Pan](#zoom--pan) | Zoom and pan the canvas even while the pointer is over a big node: sheets, timelines, players, editors |
 
 More sections are on the way.
 
@@ -29,6 +30,7 @@ There are no extra Python requirements yet. If a section ever needs some, they'l
 - Add one from the top menu, **DPD Studio → Add the Comfy Blueprint node**, or from **Add Node → utils → Comfy Blueprint**.
 - With the node in the workflow, Conduit and the Blueprint tab come on. Each has its own switch on the node, under **On here**, and the switches are saved with that workflow.
 - Take the node out and DPD Studio is off in that workflow again.
+- **Zoom & Pan** has its own small node, so you can have it on its own in any workflow (see [Zoom & Pan](#zoom--pan)).
 - **DPD Studio → All DPD Studio tools** in the top menu (also in Settings → DPD Studio) turns everything off in every workflow at once.
 
 Turning a tool off never changes your workflow: Conduit's wires are ordinary ComfyUI links, and the Blueprint node only displays. The first time ComfyUI opens with DPD Studio installed, a short note explains all this.
@@ -200,6 +202,17 @@ Workflows made with the earlier **Drop Sheet** or **Blank Sheet** still open and
 ## System Check
 
 Search for **System Check** in Add Node, or **Add** it from a sheet's gear (under Recommended). It reads your graphics card, memory, disk and attention, and suggests a picture size, steps, CFG and more for the model in your workflow, each with a reason. **Run test** renders a few quick previews at growing sizes (nothing is saved) and finds the biggest size that stays fast. **Use these settings** puts the advice into your workflow, with an Undo.
+
+## Zoom & Pan
+
+Big nodes drawn in HTML (sheets, timelines, video players, editors) swallow the mouse. Once one fills your screen, the wheel scrolls the node instead of zooming, and dragging moves things inside it, so you can't zoom out or move past it. **Zoom & Pan** fixes that, for nodes from any pack:
+
+- **The wheel zooms the canvas** over any node. Where something inside the node can really scroll (a long list, a text box), the wheel scrolls it first, then zooms when it reaches the end. **Ctrl+wheel always zooms.**
+- **Hold Space and drag, or drag with the middle mouse button**, anywhere over a node: the canvas moves under your hand, just as it does off the node.
+- **A sheet's empty paper** drags the canvas too.
+- **Pages inside a node** (a frame from the same server) get the same wheel and pan.
+
+**Turning it on:** add a **Zoom & Pan** node to the workflow (top menu **DPD Studio → Add Zoom & Pan**, or **Add Node → utils → Zoom & Pan**). Its three switches choose which parts are on, and they're saved with the workflow. It's always on in workflows with a DPD sheet. To have it in **every** workflow with no node, turn on **Settings → DPD Studio → Zoom & Pan in every workflow**. **All DPD Studio tools** off turns it off everywhere. Nothing runs on the server, and your workflow is unchanged.
 
 ## License
 
